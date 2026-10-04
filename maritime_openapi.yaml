@@ -10,35 +10,56 @@ info:
     This document covers the 18 core agent operations. It was built from the
     [public REST API docs](https://maritime.sh/docs/api) and the
     [auto-generated OpenAPI spec](https://api.maritime.sh/openapi.json), then
-    checked against live calls on 2026-10-03. Each operation carries an
-    `x-verification` block recording what was confirmed live and what was
-    taken from the docs without verification.
+    checked against live calls on 2026-10-03 and 2026-10-04. Each operation
+    carries an `x-verification` block recording what was confirmed live and
+    what was taken from the docs without verification.
 
     ## Authentication
 
-    Send a personal API key (prefix `mk_`) as a Bearer token. Create one with
-    `maritime keys create`.
+    Send a personal API key (prefix `mk_`) as a Bearer token:
 
-    ```
+    ```http
     Authorization: Bearer mk_xxxxxxxxxxxx
     ```
 
-    A missing `Authorization` header returns `403`; an invalid key returns
-    `401`.
+    You can generate an API key in two ways:
+    - **Dashboard:** In [Settings → API keys](https://maritime.sh/settings), generate a key with default full access.
+    - **CLI:** Run `maritime keys create` (requires the Maritime CLI installed and signed in via `maritime login`).
+
+    ### Credentials and scope behavior
+
+    - **Missing key (`403`):** Omitting the `Authorization` header returns `403 Forbidden` with `{"detail": "Not authenticated"}`. The key must use the `Bearer` scheme; sending the key raw without `Bearer` or in an `X-API-Key` header returns `403`.
+    - **Invalid, expired, or revoked key (`401`):** An invalid token, an expired key, or a revoked key returns `401 Unauthorized` with `{"detail": "Invalid token"}`.
+    - **Key scopes:** While keys can be minted with restricted scopes (`provision`, `deploy`, `secrets`, `manage`), restricted keys are designed for the `/api/v1` partner surface. Using a scoped key against the core agent REST API (`/api/agents/*`) returns `401 Invalid token`. Always use a full-access key for the core agent API.
+    - **Public endpoints:** Public endpoints (`/health`, `/api/templates`, and `/api/webhooks/{agent_id}`) do not require authentication and ignore invalid tokens.
 
     ## Sleeping agents
 
-    Agents sleep when idle. Chat, exec, logs-independent file operations and
-    webhook invokes wake a sleeping agent automatically, which adds about 1-3
-    seconds to the first call. You rarely need to start an agent yourself.
+    Agents sleep when idle. Chat, exec, logs, file operations, and webhook invokes wake a sleeping agent automatically, which adds about 1–3 seconds to the first call. You rarely need to start an agent yourself.
 
-    ## Errors
+    ## Status and error codes
 
-    Errors return JSON with a `detail` field. For most errors `detail` is a
-    human-readable string. For request validation failures on typed bodies and
-    query parameters it is an array of validation issues (status `422`).
-    Endpoints whose JSON body is validated by hand (exec and the file
-    write/mkdir/move endpoints) return `400` with a string `detail` instead.
+    Errors return JSON with a `detail` field. For most errors, `detail` is a human-readable string. For request validation failures on typed bodies and query parameters, `detail` is an array of validation issues (status `422`).
+
+    | Status | Meaning | `detail` format | Example / Resolution |
+    |---|---|---|---|
+    | `400 Bad Request` | Hand-validated body failure (e.g., exec or file write/mkdir/move), path outside volume, or directory given to download | String | `{"detail": "Invalid path"}`. Verify parameters and volume boundaries. |
+    | `401 Unauthorized` | Invalid, expired, revoked, or unsupported scoped API key | String | `{"detail": "Invalid token"}`. Check or re-issue your API key in dashboard settings. |
+    | `402 Payment Required` | Plan agent seat limit reached | Object (`PlanLimitError`) | `{"detail": "...", "code": "seat_limit", "upgrade": true}`. Delete an unused agent or upgrade plan. |
+    | `403 Forbidden` | Missing `Authorization` header or missing `Bearer` prefix | String | `{"detail": "Not authenticated"}`. Include `Authorization: Bearer mk_...`. |
+    | `404 Not Found` | Agent not found, path not found on volume, or file empty on download | String | `{"detail": "Agent <id> not found"}`. Check the agent ID or container path. |
+    | `405 Method Not Allowed` | Unsupported HTTP method on route | String (empty or text) | Check the `Allow` header and use the correct HTTP method. |
+    | `409 Conflict` | Agent name already taken, or file move destination exists | String | `{"detail": "You already have an agent named..."}`. Choose a distinct name or destination. |
+    | `422 Unprocessable Entity` | Schema validation error (missing/wrong field types) or invalid JSON | Array of issues | `{"detail": [{"loc": ["body", "name"], "msg": "Field required", ...}]}`. |
+    | `429 Too Many Requests` | Webhook invoke rate limit exceeded (30 invokes/min) | String | `{"detail": "Rate limit exceeded: 30/min for public-webhook"}`. Back off according to `Retry-After`. |
+    | `500 Internal Server Error` | Server-side write/mkdir failure (e.g. write to existing directory) | String | `{"detail": "Write failed"}`. Ensure target file/directory states do not conflict. |
+    | `502 Bad Gateway` | Exec command timed out (max 120s) or failed to run in VM | String | `{"detail": "Exec failed"}`. Check container state or adjust timeout. |
+
+    ### Global behaviors
+
+    - **Method not allowed (`405`):** Unsupported methods return `405` with an `Allow` header (note that the header may list only a subset of valid methods, e.g. `PUT /api/agents` returns `Allow: GET` despite `POST` also being supported).
+    - **Unknown query parameters and fields:** Extraneous query parameters and unknown JSON fields in request bodies are ignored.
+    - **Browser access (CORS):** Direct browser API calls from external origins return `400 Disallowed CORS origin` on preflight, and normal responses carry no `Access-Control-Allow-Origin` header. Always call the API from a backend service.
   contact:
     name: Maritime documentation
     url: https://maritime.sh/docs/api
@@ -60,16 +81,29 @@ tags:
     description: |
       Move files in and out of an agent's sandbox. Browse, write, mkdir, move
       and delete are confined to the agent's persistent volume. The volume
-      root depends on the framework (for example `/data` or
-      `/zeroclaw-data`), so read it from the `root` field of
+      root depends on the template/framework: `/data` for `openclaw`,
+      `codex`, and `dsh`; `/zeroclaw-data` for `zeroclaw`; `/opt/data` for
+      `hermes`. Always read it from the `root` field of
       [List files](#operation/listAgentFiles) instead of hardcoding it. Paths
       outside the volume return `400 Invalid path`. Download accepts any
       absolute path in the container. Every file call wakes a sleeping agent.
       Transfers are capped at 100 MB per file.
   - name: Webhooks
     description: |
-      Every agent has an invoke URL that accepts arbitrary JSON and delivers it
-      to the agent in the background.
+      Incoming webhooks: external services push data **into** Maritime, not the
+      other way round. Every agent has an invoke URL
+      (`/api/webhooks/{agent_id}`) that accepts arbitrary JSON and delivers it
+      to the agent in the background, waking it first if it is asleep.
+
+      Use this to connect third-party event sources — such as GitHub, Stripe,
+      or your own backend — directly to an agent without building a relay
+      server. Paste the agent's invoke URL (with its `wht_` token) into the
+      external service's webhook settings, and Maritime receives the payloads
+      for you.
+
+      Authentication uses a per-agent invoke token (`wht_…`), not your
+      personal `mk_` API key. Get the token from
+      [Get the webhook token](#operation/getWebhookToken).
 paths:
   /health:
     get:
@@ -122,9 +156,16 @@ paths:
         `id` as `templateId` when you [create an agent](#operation/createAgent).
         No authentication required.
 
-        Check `envRequired` before choosing a template: templates that list a
-        variable (for example `OPENAI_API_KEY`) need that secret set before
-        the agent can reply.
+        The `envRequired` array lists variables a template can use, but most
+        templates work without setting them: Maritime's built-in LLM proxy
+        handles model calls by default, billed against your account's
+        [AI credits](https://maritime.sh/docs/billing#ai-credits). Set your
+        own key (e.g. `OPENAI_API_KEY`) only if you want to pay your provider
+        directly instead of using credits.
+
+        The one exception is the **Claude Code** template, which always
+        requires your own `ANTHROPIC_API_KEY` because the proxy speaks the
+        OpenAI format, which Claude Code does not use.
       operationId: listTemplates
       security: []
       responses:
@@ -239,6 +280,14 @@ paths:
         The template sets `framework` for you, so you don't need to send it.
         To deploy your own code instead, set `framework: custom` with either
         `githubRepo` (and optionally `branch`) or a public `imageName`.
+
+        **`templateId` isn't checked.** An ID that matches no template still
+        returns `201`, creating a `framework: custom` agent with nothing to
+        run, and the agent takes up one of your plan's seats. Check the ID
+        against the template list first.
+
+        Names must be unique within your account (`409` otherwise). There's
+        no practical length limit: a 278-character name was accepted.
       operationId: createAgent
       requestBody:
         required: true
@@ -302,18 +351,41 @@ paths:
                 updatedAt: '2026-10-03T11:42:18.605124Z'
         '401':
           $ref: '#/components/responses/InvalidKey'
+        '402':
+          description: Your plan's agent limit is reached. Delete an agent or upgrade.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanLimitError'
+              example:
+                detail: 'You are on the free plan, which includes 3 agents (you have 3). Delete an agent you no longer need, or upgrade to a paid plan to create more: https://maritime.sh/billing'
+                code: seat_limit
+                upgrade: true
         '403':
           $ref: '#/components/responses/MissingKey'
+        '409':
+          description: You already have an agent with this name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                detail: You already have an agent named "my-agent". Please choose a different name.
         '422':
           $ref: '#/components/responses/ValidationFailed'
       x-verification:
         status: partial
-        date: '2026-10-03'
+        date: '2026-10-08'
         notes: >-
           Verified with {name, templateId}. Observed status sequence was
-          deploying -> active. The custom-image and GitHub-repo variants were
-          not exercised. Plan-limit errors (e.g. exceeding the machine count)
-          were not triggered.
+          deploying -> active. On 2026-10-04: a duplicate name returned 409; a
+          fourth agent on the free plan returned 402 with code seat_limit; an
+          unknown templateId returned 201 and created a framework=custom
+          agent; a 278-character name was accepted; {} returned 422 for name
+          only (templateId is optional); a non-string templateId, a
+          form-encoded body and invalid JSON each returned 422. On 2026-10-08:
+          missing Authorization header returned 403; invalid key returned 401.
+          The custom-image and GitHub-repo variants were not exercised.
 
   /api/agents/{agent_id}:
     parameters:
@@ -373,15 +445,19 @@ paths:
           $ref: '#/components/responses/AgentNotFound'
       x-verification:
         status: verified
-        date: '2026-10-03'
-        notes: A malformed (non-UUID) ID also returns 404, not 422.
+        date: '2026-10-04'
+        notes: >-
+          A malformed (non-UUID) ID also returns 404, not 422. The record has
+          the same fields while deploying, active and sleeping; only status
+          and the counters change.
     delete:
       tags: [Agents]
       summary: Delete an agent
       description: |
         Permanently deletes the agent, its container and its data volume.
         This cannot be undone. Returns `204` with an empty body. Deleting an
-        agent that no longer exists returns `404`.
+        agent that no longer exists returns `404`. An agent can be deleted
+        while it is still `deploying`.
       operationId: deleteAgent
       responses:
         '204':
@@ -394,7 +470,10 @@ paths:
           $ref: '#/components/responses/AgentNotFound'
       x-verification:
         status: verified
-        date: '2026-10-03'
+        date: '2026-10-04'
+        notes: >-
+          Deleting an agent 0.5 s after creating it, while its status was
+          deploying, returned 204, and a GET then returned 404.
 
   /api/agents/{agent_id}/chat:
     parameters:
@@ -409,6 +488,19 @@ paths:
 
         Replies typically take a few seconds. Custom-container agents must
         answer within 30 seconds.
+
+        An empty `message` isn't rejected; the agent receives it and replies.
+
+        If an agent template lacks a model key Maritime cannot proxy (for example
+        Claude Code without `ANTHROPIC_API_KEY`), the endpoint still returns
+        `200 OK` with an advisory message in `response` explaining that the
+        key is missing.
+
+        Similarly, if the account has reached its plan limit for concurrently awake
+        machines (such as 1 machine on the Free plan), chatting with a sleeping agent
+        does not return `429`; it returns `200 OK` within ~0.5 seconds with an advisory
+        message in `response` stating that the agent cannot be woken, and the agent
+        remains asleep.
       operationId: chatWithAgent
       requestBody:
         required: true
@@ -425,8 +517,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ChatResponse'
-              example:
-                response: hello from oas test
+              examples:
+                standard:
+                  summary: Normal agent reply
+                  value:
+                    response: hello from oas test
+                wakeLimitReached:
+                  summary: Concurrently awake machines limit reached
+                  value:
+                    response: "This agent can't be woken right now: You have 1 machines awake. Your plan permits 1. Sleep a machine, or upgrade your plan: https://maritime.sh/billing"
         '401':
           $ref: '#/components/responses/InvalidKey'
         '403':
@@ -436,15 +535,23 @@ paths:
         '422':
           $ref: '#/components/responses/ValidationFailed'
       x-verification:
-        status: partial
-        date: '2026-10-03'
+        status: verified
+        date: '2026-10-08'
         notes: >-
-          Request/response shape and 422 verified (about 3 s per reply).
-          conversation_id was accepted, but on a zeroclaw agent a second
-          message in the same conversation did not recall the first; continuity
-          appears to be framework-dependent. The response does not echo a
-          conversation ID. 404 is assumed from the shared agent lookup, not
-          triggered on this endpoint.
+          Request/response shape, 404 and 422 verified (about 2-4 s per reply).
+          An empty message, unicode and emoji, and unknown extra fields were
+          accepted; a numeric conversation_id returned 422. Chatting with a
+          sleeping agent woke it and replied in 3.5 s. conversation_id was
+          accepted, but on a zeroclaw agent a second message in the same
+          conversation did not recall the first; continuity appears to be
+          framework-dependent. On 2026-10-04: chat without custom model
+          credentials was verified on openclaw (replied via Maritime LLM proxy).
+          On 2026-10-08: chatting with a sleeping agent while another machine was
+          active on the Free plan returned 200 OK in 0.56s with an advisory
+          response string rather than 429, and the sleeping agent remained asleep.
+          in 9.3 s) and claude_code (returned 200 in 1.0 s with an advisory
+          string noting missing ANTHROPIC_API_KEY). The response does not echo
+          a conversation ID.
 
   /api/agents/{agent_id}/exec:
     parameters:
@@ -460,10 +567,15 @@ paths:
           raw shell string.
         - stdout and stderr are merged into one stream, returned in `stdout`;
           `stderr` is currently always empty.
-        - Output is capped at 256 KB.
-        - A non-zero exit code still returns `200`; check `exitCode`.
+        - Output is capped at 256 KiB (262,144 bytes). Longer output keeps
+          the **last** 256 KiB, prefixed with `[output truncated]\n`.
+        - A non-zero exit code still returns `200`; check `exitCode`. A
+          command that doesn't exist returns `200` with exit code `127`.
         - If the command exceeds `timeout`, the call returns
-          `502 Exec failed`.
+          `502 Exec failed`. Timeouts above 120 s are accepted but clamped to
+          120 s.
+        - Commands run as `root`, with `/` as the working directory and
+          `$HOME`.
       operationId: execInAgent
       requestBody:
         required: true
@@ -515,6 +627,20 @@ paths:
           $ref: '#/components/responses/MissingKey'
         '404':
           $ref: '#/components/responses/AgentNotFound'
+        '422':
+          description: The body isn't valid JSON.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+              example:
+                detail:
+                  - type: json_invalid
+                    loc: [body, 12]
+                    msg: JSON decode error
+                    input: {}
+                    ctx:
+                      error: Expecting value
         '502':
           description: The command timed out or could not be run.
           content:
@@ -524,15 +650,19 @@ paths:
               example:
                 detail: Exec failed
       x-verification:
-        status: partial
-        date: '2026-10-03'
+        status: verified
+        date: '2026-10-04'
         notes: >-
           Verified both command forms, non-zero exit, merged output, 400 and
           the 502 on timeout. `timeout` is honoured; `timeoutS` (the field in
           the auto-generated spec, which belongs to the Computers exec
-          endpoint) is ignored. A timeout of 500 was accepted without error,
-          so the documented 120 s maximum is not validated; whether it is
-          clamped was not tested. The 256 KB output cap was not tested.
+          endpoagentsint) is ignored. On 2026-10-04: `sleep 125` with timeout 500
+          returned 502 after 120.6 s, so timeouts are clamped to 120 s; 300,000
+          bytes of output came back as `[output truncated]\n` plus the last
+          262,144 bytes; an empty string or empty array returned 400; a
+          missing binary returned 200 with exit code 127; timeout 0, 1.5 and
+          "5" ran normally, while -1 returned 502 at once; unknown fields were
+          ignored; invalid JSON returned 422; commands ran as root in /.
 
   /api/agents/{agent_id}/logs:
     parameters:
@@ -548,16 +678,16 @@ paths:
       parameters:
         - name: limit
           in: query
-          description: Maximum number of entries to return.
+          description: Maximum number of entries to return. `0` is accepted and returns an empty array.
           schema:
             type: integer
-            minimum: 1
+            minimum: 0
             maximum: 1000
             default: 100
           example: 100
         - name: level
           in: query
-          description: Only return entries at this level.
+          description: Only return entries at this level. Matching is case-insensitive (`INFO` works like `info`).
           schema:
             type: string
             enum: [debug, info, warn, error]
@@ -598,11 +728,11 @@ paths:
         '404':
           $ref: '#/components/responses/AgentNotFound'
         '422':
-          description: '`limit` is out of range or `level` is not a known level.'
+          description: '`limit` is out of range or not a number, `before` is not a date-time, or `level` is not a known level.'
           content:
             application/json:
               schema:
-                anyOf:
+                anyOf: 
                   - $ref: '#/components/schemas/ValidationError'
                   - $ref: '#/components/schemas/Error'
               examples:
@@ -622,7 +752,12 @@ paths:
                           le: 1000
       x-verification:
         status: verified
-        date: '2026-10-03'
+        date: '2026-10-04'
+        notes: >-
+          On 2026-10-04: limit 0 returned 200 with an empty array; limit 1 and
+          1000 returned 200; limit=abc and before=yesterday returned 422
+          arrays; level=INFO passed validation and returned info entries. The
+          docs page's example (limit=100&level=error) returned 200.
 
   /api/agents/{agent_id}/files/list:
     parameters:
@@ -633,7 +768,13 @@ paths:
       description: |
         Lists a directory in the agent's persistent volume. Without `path`, it
         lists the volume root. The response's `root` tells you where the
-        volume is mounted for this agent's framework.
+        volume is mounted for this agent's framework (e.g. `/data` for
+        `openclaw`, `codex`, and `dsh`; `/zeroclaw-data` for `zeroclaw`;
+        `/opt/data` for `hermes`).
+
+        Entries include dotfiles, and non-ASCII names are returned as-is. In
+        the listings observed, directories came first, then files, each
+        sorted by name. A path that is a file returns `404 Not a directory`.
       operationId: listAgentFiles
       parameters:
         - name: path
@@ -677,11 +818,22 @@ paths:
                 detail: Not a directory
       x-verification:
         status: verified
-        date: '2026-10-03'
+        date: '2026-10-05'
         notes: >-
           The docs' example path /data returned 400 on a zeroclaw agent, whose
           root is /zeroclaw-data. A call against a sleeping agent woke it
-          (2.7 s).
+          (2.7 agentss on 2026-10-03, 2.2 s on 2026-10-04). On 2026-10-04: a ../
+          path returned 400; a file path returned 404 "Not a directory"; a
+          .hidden file and a "café notes.md" file were both listed, after the
+          directories.
+          Volume roots were verified across templates on 2026-10-04/05: /data
+          for openclaw, codex, and dsh; /zeroclaw-data for zeroclaw; /opt/data
+          for hermes. The docs' example path /data returned 400 on a zeroclaw
+          agent and would fail on hermes, but succeeds on openclaw, codex, and
+          dsh. A call against a sleeping agent woke it (2.7 s on 2026-10-03,
+          2.2 s on 2026-10-04). On 2026-10-04: a ../ path returned 400; a
+          file path returned 404 "Not a directory"; a .hidden file and a "café
+          notes.md" file were both listed, after the directories.
 
   /api/agents/{agent_id}/files/download:
     parameters:
@@ -695,6 +847,10 @@ paths:
         container, not just the volume, because agents also write to `/tmp`
         and workspace directories. The `Content-Type` is guessed from the
         file extension.
+
+        A directory returns `400`. **An empty (zero-byte) file returns
+        `404 File not found`**, even though List files shows it with
+        `size: 0`.
       operationId: downloadAgentFile
       parameters:
         - name: path
@@ -709,7 +865,12 @@ paths:
           description: The file contents.
           headers:
             Content-Disposition:
-              description: Always `attachment`, with the file's base name.
+              description: |
+                Always `attachment`, with the file's base name. For a non-ASCII
+                name, `filename` is an ASCII fallback with those characters
+                dropped, and `filename*` carries the full UTF-8 name, for
+                example `attachment; filename="caf notes.md";
+                filename*=UTF-8''caf%C3%A9%20notes.md`.
               schema:
                 type: string
               example: attachment; filename="report.csv"
@@ -718,12 +879,20 @@ paths:
               schema:
                 type: string
                 format: binary
+        '400':
+          description: The path is a directory.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                detail: path is a directory
         '401':
           $ref: '#/components/responses/InvalidKey'
         '403':
           $ref: '#/components/responses/MissingKey'
         '404':
-          description: The file doesn't exist, or the agent wasn't found.
+          description: The file doesn't exist or is empty, or the agent wasn't found.
           content:
             application/json:
               schema:
@@ -734,10 +903,15 @@ paths:
           $ref: '#/components/responses/ValidationFailed'
       x-verification:
         status: verified
-        date: '2026-10-03'
+        date: '2026-10-04'
         notes: >-
           Downloaded a file from the volume (served as text/csv) and from /tmp
-          (text/plain). The 100 MB cap was not tested.
+          (text/plain). On 2026-10-04: a directory returned 400 "path is a
+          directory"; a zero-byte file written with write returned 404 "File
+          not found"; a file named "café notes.md" downloaded with the
+          filename* header shown above and Content-Type text/markdown. The
+          docs page's example path /data/report.pdf returned 404. The 100 MB
+          cap was not tested.
 
   /api/agents/{agent_id}/files/upload:
     parameters:
@@ -750,8 +924,11 @@ paths:
         two modes:
 
         - **To a directory**: send `dest_dir`. The file lands in that
-          directory with its original name. An existing file with the same
-          name is overwritten without warning.
+          directory with its original base name (a name like `../evil.csv`
+          is saved as `evil.csv`). The directory is created if it doesn't
+          exist. An existing file with the same name is overwritten without
+          warning. If you also send `message`, the file still goes to
+          `dest_dir` (whether the agent is notified wasn't checked).
         - **As a chat attachment**: omit `dest_dir`. The file is saved to the
           agent's inbox (`<volume>/workspace/inbox/`) with a Unix-timestamp
           prefix, and the agent is notified in its current conversation.
@@ -791,7 +968,13 @@ paths:
                     name: report.csv
                     size: 24
         '400':
-          $ref: '#/components/responses/InvalidPath'
+          description: '`dest_dir` is outside the agent''s volume.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                detail: Invalid destination
         '401':
           $ref: '#/components/responses/InvalidKey'
         '403':
@@ -802,11 +985,15 @@ paths:
           $ref: '#/components/responses/ValidationFailed'
       x-verification:
         status: partial
-        date: '2026-10-03'
+        date: '2026-10-04'
         notes: >-
           Both modes, silent overwrite, and the 422 for a missing file part were
-          verified. The 100 MB cap and the response to a dest_dir outside the
-          volume were not tested (400 is assumed from the other file endpoints).
+          verified. On 2026-10-04: dest_dir /tmp and the docs page's example
+          /data/inbox both returned 400 "Invalid destination" (note: not
+          "Invalid path"); a dest_dir that didn't exist was created; the
+          filename ../evil.csv was saved as evil.csv; a zero-byte file was
+          accepted (size 0); dest_dir plus message saved to dest_dir. The
+          100 MB cap was not tested.
 
   /api/agents/{agent_id}/files/write:
     parameters:
@@ -858,9 +1045,26 @@ paths:
           $ref: '#/components/responses/MissingKey'
         '404':
           $ref: '#/components/responses/AgentNotFound'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          description: The write failed, for example because `path` is an existing directory.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                detail: Write failed
       x-verification:
         status: verified
-        date: '2026-10-03'
+        date: '2026-10-08'
+        notes: >-
+          On 2026-10-04: empty content created a zero-byte file; numeric
+          content returned 400 "content must be a string"; writing to an
+          existing directory returned 500 "Write failed"; a ../ path returned
+          400; an unknown extra field was ignored; a non-ASCII name with a
+          space ("café notes.md") worked. On 2026-10-08: invalid JSON body
+          returned 422 with a ValidationError array.
 
   /api/agents/{agent_id}/files/mkdir:
     parameters:
@@ -892,16 +1096,37 @@ paths:
                 ok: true
                 path: /zeroclaw-data/oas/inbox
         '400':
-          $ref: '#/components/responses/InvalidPath'
+          description: '`path` is missing or outside the agent''s volume.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                detail: Invalid path
         '401':
           $ref: '#/components/responses/InvalidKey'
         '403':
           $ref: '#/components/responses/MissingKey'
         '404':
           $ref: '#/components/responses/AgentNotFound'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          description: The directory couldn't be created, for example because a file already exists at `path`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                detail: Could not create folder
       x-verification:
         status: verified
-        date: '2026-10-03'
+        date: '2026-10-08'
+        notes: >-
+          On 2026-10-04: a missing path and a ../ path both returned 400
+          "Invalid path"; a path where a file already exists returned 500
+          "Could not create folder". On 2026-10-08: invalid JSON body returned
+          422 with a ValidationError array.
 
   /api/agents/{agent_id}/files/move:
     parameters:
@@ -935,7 +1160,18 @@ paths:
                 from: /zeroclaw-data/oas/notes.md
                 to: /zeroclaw-data/oas/inbox/notes.md
         '400':
-          $ref: '#/components/responses/InvalidPath'
+          description: '`from` or `to` is missing or outside the agent''s volume, or they are the same path.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalidPath:
+                  value:
+                    detail: Invalid path
+                samePath:
+                  value:
+                    detail: Source and destination are the same
         '401':
           $ref: '#/components/responses/InvalidKey'
         '403':
@@ -956,9 +1192,17 @@ paths:
                 $ref: '#/components/schemas/Error'
               example:
                 detail: Destination already exists
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
       x-verification:
         status: verified
-        date: '2026-10-03'
+        date: '2026-10-08'
+        notes: >-
+          On 2026-10-04: a directory moved with its contents; moving a file
+          onto itself returned 400 "Source and destination are the same"; a
+          destination in /tmp and a body without `to` both returned 400
+          "Invalid path". On 2026-10-08: invalid JSON body returned 422 with a
+          ValidationError array.
 
   /api/agents/{agent_id}/files/delete:
     parameters:
@@ -1012,7 +1256,10 @@ paths:
           $ref: '#/components/responses/ValidationFailed'
       x-verification:
         status: verified
-        date: '2026-10-03'
+        date: '2026-10-04'
+        notes: >-
+          On 2026-10-04: /tmp/oas.txt, a ../ path and the docs page's example
+          /data/old each returned 400 "Invalid path" on a zeroclaw agent.
 
   /api/webhooks/{agent_id}:
     parameters:
@@ -1021,6 +1268,9 @@ paths:
       tags: [Webhooks]
       summary: Invoke an agent by webhook
       description: |
+        This is an **incoming webhook**: you (or an external service) POST data
+        into Maritime, which delivers it to the agent.
+
         Accepts any JSON payload and delivers it to the agent in the
         background, waking the agent first if it is asleep. The call returns
         as soon as the payload is accepted; it does not wait for the agent.
@@ -1036,7 +1286,11 @@ paths:
 
         Invokes are rate limited to 30 per minute per agent and caller, and
         share the agent's message budget. Over the limit, the call returns
-        `429` with a `Retry-After` header; requests are not queued.
+        `429` with a `Retry-After` header (in seconds); requests are not
+        queued.
+
+        The body isn't validated. Plain text, invalid JSON, an empty body and
+        a JSON array are all accepted with `200` and delivered.
       operationId: invokeAgentWebhook
       security:
         - WebhookTokenHeader: []
@@ -1044,7 +1298,7 @@ paths:
         - {}
       requestBody:
         required: false
-        description: Any JSON object. It is delivered to the agent as-is.
+        description: Any JSON object, delivered to the agent as-is. Other bodies are also accepted (see above).
         content:
           application/json:
             schema:
@@ -1075,16 +1329,26 @@ paths:
               description: Seconds to wait before retrying.
               schema:
                 type: integer
+              example: 44
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                detail: 'Rate limit exceeded: 30/min for public-webhook'
       x-verification:
         status: partial
-        date: '2026-10-03'
+        date: '2026-10-04'
         notes: >-
           Header token, query token, no token and a wrong token all returned
           200 with the agent record, and all four payloads reached the agent
           (logged as "Webhook received with N keys", source "webhook"). No
-          deprecation header is sent. The {"status": "accepted"} shape and the
-          429 limit are from the docs and the auto-generated spec, not
-          observed.
+          deprecation header is sent. On 2026-10-04: after 8 invokes, a burst
+          of 35 got 22 x 200 then 13 x 429, so the 31st call in the minute was
+          refused, with Retry-After 44 and the detail shown above; text/plain,
+          invalid JSON and an empty body were delivered as "0 keys", and a
+          3-item array as "3 keys". The {"status": "accepted"} shape only
+          appears once Maritime enforces tokens, and wasn't observed.
 
   /api/webhooks/{agent_id}/token:
     parameters:
@@ -1119,15 +1383,19 @@ paths:
           $ref: '#/components/responses/AgentNotFound'
       x-verification:
         status: verified
-        date: '2026-10-03'
-        notes: Token value redacted in the example; its real format is not shown here.
+        date: '2026-10-04'
+        notes: >-
+          Token value redacted in the example; its real format is not shown
+          here. Two calls on 2026-10-04 returned the same token.
 
 components:
   securitySchemes:
     BearerAuth:
       type: http
       scheme: bearer
-      description: A personal API key with the `mk_` prefix. Create one with `maritime keys create`.
+      description: |
+        A personal API key with the `mk_` prefix. Mint one in the dashboard
+        (**Settings → API keys**) or with `maritime keys create`.
     WebhookTokenHeader:
       type: apiKey
       in: header
@@ -1152,7 +1420,7 @@ components:
 
   responses:
     MissingKey:
-      description: No `Authorization` header was sent.
+      description: No `Authorization` header was sent, or the key was sent without the `Bearer` prefix or in `X-API-Key`.
       content:
         application/json:
           schema:
@@ -1160,7 +1428,7 @@ components:
           example:
             detail: Not authenticated
     InvalidKey:
-      description: The API key is invalid.
+      description: The API key is invalid, expired, revoked, or lacks access to this surface (e.g. scoped keys on core routes).
       content:
         application/json:
           schema:
@@ -1206,6 +1474,22 @@ components:
           type: string
           description: A human-readable description of the error.
           example: Agent e25829dd-175b-4be2-97b8-f0939bb9de9f not found
+
+    PlanLimitError:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string
+          description: A human-readable explanation, including the plan's limit and a billing link.
+        code:
+          type: string
+          description: 'A machine-readable reason. Observed value: `seat_limit` (the plan''s agent limit).'
+          example: seat_limit
+        upgrade:
+          type: boolean
+          description: Whether upgrading the plan would lift the limit.
+          example: true
 
     ValidationError:
       type: object
@@ -1301,7 +1585,11 @@ components:
           example: [Lightweight, Rust]
         envRequired:
           type: array
-          description: Environment variables the agent needs before it can reply. An empty array means none.
+          description: |
+            Environment variables expected by the template. Most templates
+            route through Maritime's LLM proxy by default if omitted; only
+            templates unsupported by the proxy (like Claude Code) require the
+            key to reach the model. An empty array means none.
           items:
             type: string
           example: []
@@ -1616,7 +1904,11 @@ components:
           minimum: 1
           maximum: 120
           default: 60
-          description: Seconds before the command is killed. The documented maximum is 120.
+          description: |
+            Seconds before the command is killed. Values above 120 aren't
+            rejected; they are clamped to 120. A negative value fails at once
+            with `502`. `0`, decimals and numeric strings are accepted without
+            error; how they are interpreted isn't documented.
           example: 30
 
     ExecResponse:
@@ -1629,7 +1921,7 @@ components:
           example: 0
         stdout:
           type: string
-          description: Combined stdout and stderr, capped at 256 KB.
+          description: Combined stdout and stderr, capped at 256 KiB. Truncated output keeps the last 256 KiB, prefixed with `[output truncated]\n`.
         stderr:
           type: string
           description: Currently always empty, because stderr is merged into `stdout`.
@@ -1670,7 +1962,10 @@ components:
           example: /zeroclaw-data
         root:
           type: string
-          description: The agent's volume root. Use it to build paths for the other file endpoints.
+          description: |
+            The agent's volume root (e.g. `/data` for `openclaw`/`codex`/`dsh`,
+            `/zeroclaw-data` for `zeroclaw`, `/opt/data` for `hermes`). Use it
+            to build paths for the other file endpoints.
           example: /zeroclaw-data
         entries:
           type: array
@@ -1710,7 +2005,7 @@ components:
           example: /data/inbox
         message:
           type: string
-          description: Text sent to the agent along with a chat attachment. Only used when `dest_dir` is omitted.
+          description: Text sent to the agent along with a chat attachment. Intended for when `dest_dir` is omitted; with `dest_dir` the file still goes to that directory.
           example: Here is the report, how many rows does it have?
 
     UploadResponse:
