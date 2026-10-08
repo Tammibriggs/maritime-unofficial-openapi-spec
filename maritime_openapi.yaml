@@ -10,9 +10,47 @@ info:
     This document covers the 18 core agent operations. It was built from the
     [public REST API docs](https://maritime.sh/docs/api) and the
     [auto-generated OpenAPI spec](https://api.maritime.sh/openapi.json), then
-    checked against live calls on 2026-10-03 and 2026-10-04. Each operation
-    carries an `x-verification` block recording what was confirmed live and
-    what was taken from the docs without verification.
+    checked against live calls on 2026-10-03, 2026-10-04, and 2026-10-08. Each
+    operation carries an `x-verification` block recording what was confirmed live
+    and what was taken from the docs without verification.
+
+    ## Quickstart
+
+    Get from an empty environment to a working AI agent in three curl commands:
+
+    ### 1. Set your API key
+
+    Generate an API key from the dashboard ([Settings → API keys](https://maritime.sh/settings)) or via `maritime keys create`, then export it in your shell:
+
+    ```bash
+    export MARITIME_API_KEY="mk_your_api_key_here"
+    ```
+
+    ### 2. Create an agent
+
+    Deploy an agent from a ready-made template (such as `openclaw`):
+
+    ```bash
+    curl -s -X POST https://api.maritime.sh/api/agents \
+      -H "Authorization: Bearer $MARITIME_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{"name": "my-first-agent", "templateId": "openclaw"}'
+    ```
+
+    The response returns `201 Created` with `status: deploying`. Note the `id` from the response. The agent transitions to `active` in about 20–40 seconds.
+
+    ### 3. Send a message
+
+    Chat with your deployed agent:
+
+    ```bash
+    curl -s -X POST https://api.maritime.sh/api/agents/{agent_id}/chat \
+      -H "Authorization: Bearer $MARITIME_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{"message": "Hello! Introduce yourself."}'
+    ```
+
+    The call waits for the agent to finish its turn and returns `200 OK` with `{"response": "..."}`. Sleeping agents wake automatically upon receiving a message.
 
     ## Authentication
 
@@ -36,6 +74,20 @@ info:
     ## Sleeping agents
 
     Agents sleep when idle. Chat, exec, logs, file operations, and webhook invokes wake a sleeping agent automatically, which adds about 1–3 seconds to the first call. You rarely need to start an agent yourself.
+
+    ## Rate limits and thresholds
+
+    The platform enforces operational thresholds across file sizes, command timeouts, and webhook requests:
+
+    | Resource / Operation | Limit / Threshold | Behavior when exceeded |
+    |---|---|---|
+    | **Webhook invokes** (`POST /webhooks/{agent_id}`) | 30 calls per minute per agent & caller | Returns `429 Too Many Requests` with a `Retry-After` header in seconds. |
+    | **REST API requests** (Agents, files, logs) | No fixed request-per-minute cap | Normal CRUD and polling operations are not aggressively rate-limited. |
+    | **Concurrently awake machines** | Free: 1, Starter: 5, Growth: 25, Scale: 60 | Chatting with a sleeping agent at capacity returns `200 OK` with an advisory string explaining the limit; the agent remains asleep. File operations wake the machine directly. |
+    | **Command execution timeout** (`POST /exec`) | Default 60s; maximum 120s | Timeouts above 120s are clamped. Commands that exceed the limit return `502 Exec failed`. |
+    | **Command output buffer** (`POST /exec`) | 262,144 characters (256 KiB) | Excess output is truncated from the head; the trailing 256 KiB is retained with a `[output truncated]` marker. |
+    | **File transfer size** (Upload & Download) | 100 MB per file | Uploads exceeding 100 MB are rejected. |
+    | **Log entries pagination** (`GET /logs`) | Maximum 1000 entries per request | Passing `limit` > 1000 returns `422 Unprocessable Entity`. |
 
     ## Status and error codes
 
