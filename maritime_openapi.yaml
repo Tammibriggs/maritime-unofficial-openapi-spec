@@ -4,31 +4,37 @@ info:
   version: 1.0.0
   description: |
     The Maritime REST API lets you create AI agents from templates, chat with
-    them, run commands inside their sandboxed VMs, move files in and out of
-    their persistent volumes, and trigger them from webhooks.
+    them, run commands inside their sandboxed virtual machines (VMs), move
+    files in and out of their persistent volumes, and trigger them from
+    webhooks.
 
-    This document covers the 18 core agent operations. It was built from the
-    [public REST API docs](https://maritime.sh/docs/api) and the
-    [auto-generated OpenAPI spec](https://api.maritime.sh/openapi.json), then
-    checked against live calls on 2026-10-03, 2026-10-04, and 2026-10-08. Each
-    operation carries an `x-verification` block recording what was confirmed live
-    and what was taken from the docs without verification.
+    This document covers the 18 core agent operations. It's based on the
+    [Maritime REST API documentation](https://maritime.sh/docs/api) and the
+    [Maritime OpenAPI specification](https://api.maritime.sh/openapi.json), and
+    was checked against live calls on October 3, 4, and 8, 2026. Each
+    operation has an `x-verification` block that records what was confirmed
+    live and what was taken from the docs without verification.
 
     ## Quickstart
 
-    Get from an empty environment to a working AI agent in three curl commands:
+    Go from an empty environment to a working AI agent in three steps.
 
     ### 1. Set your API key
 
-    Generate an API key from the dashboard ([Settings → API keys](https://maritime.sh/settings)) or via `maritime keys create`, then export it in your shell:
+    In the Maritime dashboard, go to the
+    [Maritime dashboard settings](https://maritime.sh/settings) and generate a
+    key in the **API keys** section. Alternatively, run `maritime keys create`.
+    Then export the key in your shell:
 
     ```bash
-    export MARITIME_API_KEY="mk_your_api_key_here"
+    export MARITIME_API_KEY="API_KEY"
     ```
+
+    Replace `API_KEY` with your API key, which starts with `mk_`.
 
     ### 2. Create an agent
 
-    Deploy an agent from a ready-made template (such as `openclaw`):
+    Create an agent from a ready-made template, such as `openclaw`:
 
     ```bash
     curl -s -X POST https://api.maritime.sh/api/agents \
@@ -37,81 +43,85 @@ info:
       -d '{"name": "my-first-agent", "templateId": "openclaw"}'
     ```
 
-    The response returns `201 Created` with `status: deploying`. Note the `id` from the response. The agent transitions to `active` in about 20–40 seconds.
+    The API returns `201 Created` with `status: deploying`. Copy the `id` value from the response; you need it in the next step. The agent's status changes to `active` in about 20 to 40 seconds.
 
     ### 3. Send a message
 
     Chat with your deployed agent:
 
     ```bash
-    curl -s -X POST https://api.maritime.sh/api/agents/{agent_id}/chat \
+    curl -s -X POST https://api.maritime.sh/api/agents/AGENT_ID/chat \
       -H "Authorization: Bearer $MARITIME_API_KEY" \
       -H "Content-Type: application/json" \
       -d '{"message": "Hello! Introduce yourself."}'
     ```
 
-    The call waits for the agent to finish its turn and returns `200 OK` with `{"response": "..."}`. Sleeping agents wake automatically upon receiving a message.
+    Replace `AGENT_ID` with the `id` value from the previous step.
+
+    The call waits for the agent to reply, and then returns `200 OK` with `{"response": "..."}`. If the agent is asleep, the message wakes it automatically.
 
     ## Authentication
 
-    Send a personal API key (prefix `mk_`) as a Bearer token:
+    Send your personal API key as a bearer token in the `Authorization` header:
 
     ```http
-    Authorization: Bearer mk_xxxxxxxxxxxx
+    Authorization: Bearer API_KEY
     ```
 
+    Replace `API_KEY` with your API key, which starts with `mk_`.
+
     You can generate an API key in two ways:
-    - **Dashboard:** In [Settings → API keys](https://maritime.sh/settings), generate a key with default full access.
-    - **CLI:** Run `maritime keys create` (requires the Maritime CLI installed and signed in via `maritime login`).
+    - **Dashboard:** Go to [Maritime dashboard settings](https://maritime.sh/settings) and generate a key in the **API keys** section. Keys generated here have full access by default.
+    - **CLI:** If you have the Maritime CLI installed and are signed in with `maritime login`, run `maritime keys create`.
 
     ### Credentials and scope behavior
 
-    - **Missing key (`403`):** Omitting the `Authorization` header returns `403 Forbidden` with `{"detail": "Not authenticated"}`. The key must use the `Bearer` scheme; sending the key raw without `Bearer` or in an `X-API-Key` header returns `403`.
+    - **Missing key (`403`):** Omitting the `Authorization` header returns `403 Forbidden` with `{"detail": "Not authenticated"}`. The key must use the `Bearer` scheme; sending the key without `Bearer`, or in an `X-API-Key` header, returns `403`.
     - **Invalid, expired, or revoked key (`401`):** An invalid token, an expired key, or a revoked key returns `401 Unauthorized` with `{"detail": "Invalid token"}`.
-    - **Key scopes:** While keys can be minted with restricted scopes (`provision`, `deploy`, `secrets`, `manage`), restricted keys are designed for the `/api/v1` partner surface. Using a scoped key against the core agent REST API (`/api/agents/*`) returns `401 Invalid token`. Always use a full-access key for the core agent API.
-    - **Public endpoints:** Public endpoints (`/health`, `/api/templates`, and `/api/webhooks/{agent_id}`) do not require authentication and ignore invalid tokens.
+    - **Key scopes:** You can create keys with restricted scopes (`provision`, `deploy`, `secrets`, and `manage`), but restricted keys are meant for the `/api/v1` partner API. If you use a scoped key with the core agent API (`/api/agents/*`), the API returns `401` with `Invalid token`. Use a full-access key for the core agent API.
+    - **Public endpoints:** Public endpoints (`/health`, `/api/templates`, and `/api/webhooks/{agent_id}`) don't require authentication and ignore invalid tokens.
 
     ## Sleeping agents
 
-    Agents sleep when idle. Chat, exec, logs, file operations, and webhook invokes wake a sleeping agent automatically, which adds about 1–3 seconds to the first call. You rarely need to start an agent yourself.
+    Agents sleep when idle. Chat, command, log, file, and webhook requests wake a sleeping agent automatically, which adds about 1 to 3 seconds to the first call. You rarely need to start an agent yourself.
 
     ## Rate limits and thresholds
 
-    The platform enforces operational thresholds across file sizes, command timeouts, and webhook requests:
+    Maritime enforces the following limits on webhook calls, awake machines, commands, file transfers, and log queries:
 
-    | Resource / Operation | Limit / Threshold | Behavior when exceeded |
+    | Resource or operation | Limit | Behavior when exceeded |
     |---|---|---|
-    | **Webhook invokes** (`POST /webhooks/{agent_id}`) | 30 calls per minute per agent & caller | Returns `429 Too Many Requests` with a `Retry-After` header in seconds. |
-    | **REST API requests** (Agents, files, logs) | No fixed request-per-minute cap | Normal CRUD and polling operations are not aggressively rate-limited. |
-    | **Concurrently awake machines** | Free: 1, Starter: 5, Growth: 25, Scale: 60 | Chatting with a sleeping agent at capacity returns `200 OK` with an advisory string explaining the limit; the agent remains asleep. File operations wake the machine directly. |
-    | **Command execution timeout** (`POST /exec`) | Default 60s; maximum 120s | Timeouts above 120s are clamped. Commands that exceed the limit return `502 Exec failed`. |
-    | **Command output buffer** (`POST /exec`) | 262,144 characters (256 KiB) | Excess output is truncated from the head; the trailing 256 KiB is retained with a `[output truncated]` marker. |
-    | **File transfer size** (Upload & Download) | 100 MB per file | Uploads exceeding 100 MB are rejected. |
-    | **Log entries pagination** (`GET /logs`) | Maximum 1000 entries per request | Passing `limit` > 1000 returns `422 Unprocessable Entity`. |
+    | **Webhook calls** (`POST /api/webhooks/{agent_id}`) | 30 calls per minute for each agent and caller | Returns `429 Too Many Requests` with a `Retry-After` header that gives the wait time in seconds. |
+    | **REST API requests** (agents, files, and logs) | No fixed requests-per-minute limit | Normal create, read, update, delete, and polling requests aren't aggressively rate-limited. |
+    | **Concurrently awake machines** | Free: 1, Starter: 5, Growth: 25, Scale: 60 | Chatting with a sleeping agent at capacity returns `200 OK` with an advisory string that explains the limit, and the agent stays asleep. File operations wake the machine directly. |
+    | **Command timeout** (`POST /api/agents/{agent_id}/exec`) | Default 60 seconds; maximum 120 seconds | Values greater than 120 are clamped to 120 seconds. Commands that run longer than the timeout return `502` with `Exec failed`. |
+    | **Command output** (`POST /api/agents/{agent_id}/exec`) | 262,144 bytes (256 KiB) | The API drops the start of the output and keeps the last 256 KiB, prefixed with `[output truncated]`. |
+    | **File transfer size** (upload and download) | 100 MB per file | Uploads larger than 100 MB are rejected. |
+    | **Log entries per request** (`GET /api/agents/{agent_id}/logs`) | 1,000 entries | A `limit` greater than 1,000 returns `422 Unprocessable Entity`. |
 
     ## Status and error codes
 
     Errors return JSON with a `detail` field. For most errors, `detail` is a human-readable string. For request validation failures on typed bodies and query parameters, `detail` is an array of validation issues (status `422`).
 
-    | Status | Meaning | `detail` format | Example / Resolution |
+    | Status | Meaning | `detail` format | Example and resolution |
     |---|---|---|---|
-    | `400 Bad Request` | Hand-validated body failure (e.g., exec or file write/mkdir/move), path outside volume, or directory given to download | String | `{"detail": "Invalid path"}`. Verify parameters and volume boundaries. |
-    | `401 Unauthorized` | Invalid, expired, revoked, or unsupported scoped API key | String | `{"detail": "Invalid token"}`. Check or re-issue your API key in dashboard settings. |
-    | `402 Payment Required` | Plan agent seat limit reached | Object (`PlanLimitError`) | `{"detail": "...", "code": "seat_limit", "upgrade": true}`. Delete an unused agent or upgrade plan. |
-    | `403 Forbidden` | Missing `Authorization` header or missing `Bearer` prefix | String | `{"detail": "Not authenticated"}`. Include `Authorization: Bearer mk_...`. |
-    | `404 Not Found` | Agent not found, path not found on volume, or file empty on download | String | `{"detail": "Agent <id> not found"}`. Check the agent ID or container path. |
-    | `405 Method Not Allowed` | Unsupported HTTP method on route | String (empty or text) | Check the `Allow` header and use the correct HTTP method. |
-    | `409 Conflict` | Agent name already taken, or file move destination exists | String | `{"detail": "You already have an agent named..."}`. Choose a distinct name or destination. |
-    | `422 Unprocessable Entity` | Schema validation error (missing/wrong field types) or invalid JSON | Array of issues | `{"detail": [{"loc": ["body", "name"], "msg": "Field required", ...}]}`. |
-    | `429 Too Many Requests` | Webhook invoke rate limit exceeded (30 invokes/min) | String | `{"detail": "Rate limit exceeded: 30/min for public-webhook"}`. Back off according to `Retry-After`. |
-    | `500 Internal Server Error` | Server-side write/mkdir failure (e.g. write to existing directory) | String | `{"detail": "Write failed"}`. Ensure target file/directory states do not conflict. |
-    | `502 Bad Gateway` | Exec command timed out (max 120s) or failed to run in VM | String | `{"detail": "Exec failed"}`. Check container state or adjust timeout. |
+    | `400 Bad Request` | Invalid body for exec or for the file write, mkdir, or move endpoints; a path outside the volume; or a directory passed to download | String | `{"detail": "Invalid path"}`. Check the request parameters and make sure the path is inside the volume. |
+    | `401 Unauthorized` | Invalid, expired, revoked, or unsupported scoped API key | String | `{"detail": "Invalid token"}`. Check your API key, or generate a new one in the dashboard settings. |
+    | `402 Payment Required` | Your plan's agent limit is reached | Object (`PlanLimitError`) | `{"detail": "...", "code": "seat_limit", "upgrade": true}`. Delete an unused agent or upgrade your plan. |
+    | `403 Forbidden` | Missing `Authorization` header or missing `Bearer` prefix | String | `{"detail": "Not authenticated"}`. Include `Authorization: Bearer API_KEY`. |
+    | `404 Not Found` | Agent not found, path not found on the volume, or downloaded file is empty | String | `{"detail": "Agent AGENT_ID not found"}`. Check the agent ID or container path. |
+    | `405 Method Not Allowed` | Unsupported HTTP method on the route | String (empty or text) | Check the `Allow` header and use the correct HTTP method. |
+    | `409 Conflict` | Agent name already taken, or the destination of a file move already exists | String | `{"detail": "You already have an agent named..."}`. Choose a different name or destination. |
+    | `422 Unprocessable Entity` | Schema validation error (missing fields or wrong field types) or invalid JSON | Array of issues | `{"detail": [{"loc": ["body", "name"], "msg": "Field required", ...}]}`. |
+    | `429 Too Many Requests` | Webhook rate limit exceeded (30 calls per minute) | String | `{"detail": "Rate limit exceeded: 30/min for public-webhook"}`. Wait the number of seconds in `Retry-After`, and then retry. |
+    | `500 Internal Server Error` | Server-side write or mkdir failure (for example, writing to an existing directory) | String | `{"detail": "Write failed"}`. Make sure that the target path isn't an existing directory (for write) or an existing file (for mkdir). |
+    | `502 Bad Gateway` | Command timed out (maximum 120 seconds) or couldn't run in the VM | String | `{"detail": "Exec failed"}`. Check the agent's status, or increase `timeout`. |
 
     ### Global behaviors
 
-    - **Method not allowed (`405`):** Unsupported methods return `405` with an `Allow` header (note that the header may list only a subset of valid methods, e.g. `PUT /api/agents` returns `Allow: GET` despite `POST` also being supported).
-    - **Unknown query parameters and fields:** Extraneous query parameters and unknown JSON fields in request bodies are ignored.
-    - **Browser access (CORS):** Direct browser API calls from external origins return `400 Disallowed CORS origin` on preflight, and normal responses carry no `Access-Control-Allow-Origin` header. Always call the API from a backend service.
+    - **Method not allowed (`405`):** Unsupported methods return `405` with an `Allow` header. The header might list only some of the valid methods. For example, `PUT /api/agents` returns `Allow: GET`, even though `POST` is also supported.
+    - **Unknown query parameters and fields:** Extra query parameters and unknown JSON fields in request bodies are ignored.
+    - **Browser access (CORS):** Direct browser calls from external origins return `400 Disallowed CORS origin` on the cross-origin resource sharing (CORS) preflight, and normal responses have no `Access-Control-Allow-Origin` header. Call the API from a backend service instead.
   contact:
     name: Maritime documentation
     url: https://maritime.sh/docs/api
@@ -126,47 +136,47 @@ tags:
   - name: Templates
     description: The catalog of ready-made agents you can create from.
   - name: Agents
-    description: Create, list, inspect and delete agents.
+    description: Create, list, inspect, and delete agents.
   - name: Interaction
     description: Talk to an agent, run commands in its VM, and read its logs.
   - name: Files
     description: |
-      Move files in and out of an agent's sandbox. Browse, write, mkdir, move
-      and delete are confined to the agent's persistent volume. The volume
-      root depends on the template/framework: `/data` for `openclaw`,
-      `codex`, and `dsh`; `/zeroclaw-data` for `zeroclaw`; `/opt/data` for
-      `hermes`. Always read it from the `root` field of
-      [List files](#operation/listAgentFiles) instead of hardcoding it. Paths
+      Move files in and out of an agent's sandbox. Listing, writing, creating
+      directories, moving, and deleting are limited to the agent's persistent
+      volume. The volume root depends on the template: `/data` for
+      `openclaw`, `codex`, and `dsh`; `/zeroclaw-data` for `zeroclaw`; and
+      `/opt/data` for `hermes`. Don't hardcode the root; read it from the
+      `root` field returned by [List files](#operation/listAgentFiles). Paths
       outside the volume return `400 Invalid path`. Download accepts any
-      absolute path in the container. Every file call wakes a sleeping agent.
-      Transfers are capped at 100 MB per file.
+      absolute path in the container. Every file request wakes a sleeping
+      agent. Transfers are limited to 100 MB per file.
   - name: Webhooks
     description: |
-      Incoming webhooks: external services push data **into** Maritime, not the
-      other way round. Every agent has an invoke URL
+      These are incoming webhooks: external services send data **to**
+      Maritime, not the other way around. Every agent has an invoke URL
       (`/api/webhooks/{agent_id}`) that accepts arbitrary JSON and delivers it
-      to the agent in the background, waking it first if it is asleep.
+      to the agent in the background, waking the agent first if it's asleep.
 
-      Use this to connect third-party event sources — such as GitHub, Stripe,
-      or your own backend — directly to an agent without building a relay
-      server. Paste the agent's invoke URL (with its `wht_` token) into the
-      external service's webhook settings, and Maritime receives the payloads
-      for you.
+      Use webhooks to connect third-party event sources—such as GitHub,
+      Stripe, or your own backend—directly to an agent without building a
+      relay server. Paste the agent's invoke URL (with its `wht_` token) into
+      the external service's webhook settings, and Maritime receives the
+      payloads for you.
 
-      Authentication uses a per-agent invoke token (`wht_…`), not your
-      personal `mk_` API key. Get the token from
+      Webhooks authenticate with a per-agent invoke token (`wht_…`), not your
+      personal `mk_` API key. To get the token, see
       [Get the webhook token](#operation/getWebhookToken).
 paths:
   /health:
     get:
       tags: [Health]
       summary: Check API health
-      description: Returns `200` with `status` set to `ok` when the API is up. No authentication required.
+      description: Returns `200 OK` with `status` set to `ok` when the API is operational. Authentication isn't required.
       operationId: getHealth
       security: []
       responses:
         '200':
-          description: The API is up.
+          description: The API is operational.
           content:
             application/json:
               schema:
@@ -204,25 +214,26 @@ paths:
       tags: [Templates]
       summary: List templates
       description: |
-        Returns every agent template you can create from. Pass a template's
-        `id` as `templateId` when you [create an agent](#operation/createAgent).
-        No authentication required.
+        Returns all templates that you can use to create an agent. Pass a
+        template's `id` value as `templateId` when calling
+        [Create an agent](#operation/createAgent). Authentication isn't
+        required.
 
-        The `envRequired` array lists variables a template can use, but most
-        templates work without setting them: Maritime's built-in LLM proxy
-        handles model calls by default, billed against your account's
-        [AI credits](https://maritime.sh/docs/billing#ai-credits). Set your
-        own key (e.g. `OPENAI_API_KEY`) only if you want to pay your provider
-        directly instead of using credits.
+        The `envRequired` array lists variables that a template can use, but
+        most templates work without them. Maritime's built-in proxy handles
+        model calls by default, billed to your account's
+        [AI credits billing](https://maritime.sh/docs/billing#ai-credits).
+        Set your own key (for example, `OPENAI_API_KEY`) only if you want to
+        pay your provider directly instead of using credits.
 
         The one exception is the **Claude Code** template, which always
-        requires your own `ANTHROPIC_API_KEY` because the proxy speaks the
+        requires your own `ANTHROPIC_API_KEY` because the proxy uses the
         OpenAI format, which Claude Code does not use.
       operationId: listTemplates
       security: []
       responses:
         '200':
-          description: The template catalog.
+          description: A list of available agent templates.
           content:
             application/json:
               schema:
@@ -266,11 +277,11 @@ paths:
     get:
       tags: [Agents]
       summary: List agents
-      description: Returns all agents owned by the authenticated account as a bare JSON array (no pagination wrapper).
+      description: Returns all agents owned by the authenticated account as a JSON array without pagination.
       operationId: listAgents
       responses:
         '200':
-          description: The account's agents.
+          description: A list of agents owned by the authenticated account.
           content:
             application/json:
               schema:
@@ -323,23 +334,25 @@ paths:
       tags: [Agents]
       summary: Create an agent
       description: |
-        Creates an agent and starts deploying it immediately. The response
-        returns `201` with `status: deploying`; poll
+        Creates an agent and starts deployment immediately. The response
+        returns `201 Created` with `status: deploying`. Poll
         [Get an agent](#operation/getAgent) until `status` is `active` (about
         25 seconds for the `zeroclaw` template).
 
-        Always pass `templateId` (see [List templates](#operation/listTemplates)).
-        The template sets `framework` for you, so you don't need to send it.
-        To deploy your own code instead, set `framework: custom` with either
-        `githubRepo` (and optionally `branch`) or a public `imageName`.
+        When creating an agent from a template, pass `templateId` (see
+        [List templates](#operation/listTemplates)) and omit `framework`; the
+        platform configures the framework automatically based on the template.
+        To deploy your own code instead, set `framework` to `custom` along with
+        either `githubRepo` (and optionally `branch`) or a public `imageName`.
 
-        **`templateId` isn't checked.** An ID that matches no template still
-        returns `201`, creating a `framework: custom` agent with nothing to
-        run, and the agent takes up one of your plan's seats. Check the ID
-        against the template list first.
+        Check the template list first before specifying an ID. An ID that
+        matches no template still returns `201 Created`, which creates a
+        `framework: custom` agent with nothing to run and consumes one of your
+        plan's agent seats.
 
-        Names must be unique within your account (`409` otherwise). There's
-        no practical length limit: a 278-character name was accepted.
+        Names must be unique within your account; duplicate names return
+        `409 Conflict`. There is no practical length limit; names up to
+        278 characters are accepted.
       operationId: createAgent
       requestBody:
         required: true
@@ -404,7 +417,7 @@ paths:
         '401':
           $ref: '#/components/responses/InvalidKey'
         '402':
-          description: Your plan's agent limit is reached. Delete an agent or upgrade.
+          description: Your plan's agent limit has been reached. Delete an unused agent or upgrade your plan.
           content:
             application/json:
               schema:
@@ -416,7 +429,7 @@ paths:
         '403':
           $ref: '#/components/responses/MissingKey'
         '409':
-          description: You already have an agent with this name.
+          description: An agent with this name already exists in your account.
           content:
             application/json:
               schema:
@@ -437,7 +450,7 @@ paths:
           only (templateId is optional); a non-string templateId, a
           form-encoded body and invalid JSON each returned 422. On 2026-10-08:
           missing Authorization header returned 403; invalid key returned 401.
-          The custom-image and GitHub-repo variants were not exercised.
+          The custom-image and GitHub repository variants were not exercised.
 
   /api/agents/{agent_id}:
     parameters:
@@ -445,11 +458,11 @@ paths:
     get:
       tags: [Agents]
       summary: Get an agent
-      description: Returns one agent. Poll this after creating an agent to see when `status` becomes `active`.
+      description: Returns an agent by ID. After creating an agent, poll this endpoint to determine when `status` becomes `active`.
       operationId: getAgent
       responses:
         '200':
-          description: The agent.
+          description: The agent details.
           content:
             application/json:
               schema:
@@ -506,14 +519,14 @@ paths:
       tags: [Agents]
       summary: Delete an agent
       description: |
-        Permanently deletes the agent, its container and its data volume.
-        This cannot be undone. Returns `204` with an empty body. Deleting an
-        agent that no longer exists returns `404`. An agent can be deleted
-        while it is still `deploying`.
+        Permanently deletes the agent, its container, and its persistent
+        volume. This action can't be undone. Returns `204 No Content` with an
+        empty response body. Deleting an agent that no longer exists returns
+        `404 Not Found`. You can delete an agent while it is still `deploying`.
       operationId: deleteAgent
       responses:
         '204':
-          description: The agent was deleted.
+          description: The agent was deleted successfully.
         '401':
           $ref: '#/components/responses/InvalidKey'
         '403':
@@ -538,21 +551,21 @@ paths:
         the same delivery path as Telegram and webhooks. A sleeping agent
         wakes automatically, so the first call after a sleep takes longer.
 
-        Replies typically take a few seconds. Custom-container agents must
-        answer within 30 seconds.
+        Replies typically take a few seconds. Agents running custom containers
+        must respond within 30 seconds.
 
         An empty `message` isn't rejected; the agent receives it and replies.
 
-        If an agent template lacks a model key Maritime cannot proxy (for example
-        Claude Code without `ANTHROPIC_API_KEY`), the endpoint still returns
-        `200 OK` with an advisory message in `response` explaining that the
-        key is missing.
+        If an agent template lacks a model key Maritime cannot proxy (for
+        example, Claude Code without `ANTHROPIC_API_KEY`), the endpoint still
+        returns `200 OK` with an advisory message in `response` explaining that
+        the key is missing.
 
-        Similarly, if the account has reached its plan limit for concurrently awake
-        machines (such as 1 machine on the Free plan), chatting with a sleeping agent
-        does not return `429`; it returns `200 OK` within ~0.5 seconds with an advisory
-        message in `response` stating that the agent cannot be woken, and the agent
-        remains asleep.
+        Similarly, if the account has reached its plan limit for concurrently
+        awake machines (such as 1 machine on the Free plan), chatting with a
+        sleeping agent does not return `429`; it returns `200 OK` 
+        with an advisory message in `response` stating that the agent
+        can't be woken, and the agent remains asleep.
       operationId: chatWithAgent
       requestBody:
         required: true
@@ -597,7 +610,7 @@ paths:
           accepted, but on a zeroclaw agent a second message in the same
           conversation did not recall the first; continuity appears to be
           framework-dependent. On 2026-10-04: chat without custom model
-          credentials was verified on openclaw (replied via Maritime LLM proxy).
+          credentials was verified on openclaw (replied through the Maritime LLM proxy).
           On 2026-10-08: chatting with a sleeping agent while another machine was
           active on the Free plan returned 200 OK in 0.56s with an advisory
           response string rather than 429, and the sleeping agent remained asleep.
@@ -615,17 +628,17 @@ paths:
         Runs a one-shot, non-interactive shell command in the agent's VM and
         returns its exit code and output. Wakes a sleeping agent.
 
-        - `command` is either an argv array (each token is quoted for you) or a
-          raw shell string.
-        - stdout and stderr are merged into one stream, returned in `stdout`;
-          `stderr` is currently always empty.
-        - Output is capped at 256 KiB (262,144 bytes). Longer output keeps
-          the **last** 256 KiB, prefixed with `[output truncated]\n`.
-        - A non-zero exit code still returns `200`; check `exitCode`. A
-          command that doesn't exist returns `200` with exit code `127`.
-        - If the command exceeds `timeout`, the call returns
-          `502 Exec failed`. Timeouts above 120 s are accepted but clamped to
-          120 s.
+        - `command` is either an argument array (tokens are quoted
+          automatically) or a raw shell string.
+        - Standard output and standard error are merged into one stream,
+          returned in `stdout`. `stderr` is currently always empty.
+        - Output is limited to 256 KiB (262,144 bytes). Output exceeding this
+          limit keeps the trailing 256 KiB, prefixed with `[output truncated]\n`.
+        - A non-zero exit code still returns `200 OK`; check `exitCode`. A
+          command that doesn't exist returns `200 OK` with exit code `127`.
+        - If the command exceeds `timeout`, the call returns `502` with
+          `Exec failed`. Timeouts greater than 120 seconds are clamped to
+          120 seconds.
         - Commands run as `root`, with `/` as the working directory and
           `$HOME`.
       operationId: execInAgent
@@ -647,7 +660,7 @@ paths:
                   command: 'grep -c ERROR /data/app.log || true'
       responses:
         '200':
-          description: The command ran (whatever its exit code).
+          description: The command was executed.
           content:
             application/json:
               schema:
@@ -666,7 +679,7 @@ paths:
                     stdout: "out\nerr\n"
                     stderr: ''
         '400':
-          description: '`command` is missing, empty, or not a string or list of strings.'
+          description: '`command` is missing, empty, or neither a string nor a list of strings.'
           content:
             application/json:
               schema:
@@ -680,7 +693,7 @@ paths:
         '404':
           $ref: '#/components/responses/AgentNotFound'
         '422':
-          description: The body isn't valid JSON.
+          description: The request body isn't valid JSON.
           content:
             application/json:
               schema:
@@ -694,7 +707,7 @@ paths:
                     ctx:
                       error: Expecting value
         '502':
-          description: The command timed out or could not be run.
+          description: The command timed out or failed to execute in the VM.
           content:
             application/json:
               schema:
@@ -723,14 +736,14 @@ paths:
       tags: [Interaction]
       summary: Get agent logs
       description: |
-        Returns the agent's log entries, newest first. To page back through
-        older entries, pass the `timestamp` of the last entry you received as
-        `before`.
+        Returns the agent's log entries in reverse chronological order (newest
+        first). To page back through older entries, pass the `timestamp` of the
+        last received entry as `before`.
       operationId: getAgentLogs
       parameters:
         - name: limit
           in: query
-          description: Maximum number of entries to return. `0` is accepted and returns an empty array.
+          description: Maximum number of entries to return. Passing `0` returns an empty array.
           schema:
             type: integer
             minimum: 0
@@ -739,21 +752,21 @@ paths:
           example: 100
         - name: level
           in: query
-          description: Only return entries at this level. Matching is case-insensitive (`INFO` works like `info`).
+          description: Filters entries by log level. Matching is case-insensitive (for example, `INFO` matches `info`).
           schema:
             type: string
             enum: [debug, info, warn, error]
           example: error
         - name: before
           in: query
-          description: Only return entries strictly older than this ISO 8601 timestamp. Use it as a pagination cursor.
+          description: Filters entries strictly older than this ISO 8601 timestamp. Use this parameter as a pagination cursor.
           schema:
             type: string
             format: date-time
           example: '2026-10-03T11:42:40Z'
       responses:
         '200':
-          description: Log entries, newest first. An empty array if none match.
+          description: Log entries sorted in descending order by timestamp (newest first). Returns an empty array if no entries match.
           content:
             application/json:
               schema:
@@ -793,7 +806,7 @@ paths:
                   value:
                     detail: "Unknown log level 'bogus'; expected one of ['debug', 'error', 'info', 'warn']"
                 badLimit:
-                  summary: Limit above 1000 (validation array)
+                  summary: Limit greater than 1000 (validation array)
                   value:
                     detail:
                       - type: less_than_equal
@@ -818,15 +831,16 @@ paths:
       tags: [Files]
       summary: List files
       description: |
-        Lists a directory in the agent's persistent volume. Without `path`, it
-        lists the volume root. The response's `root` tells you where the
-        volume is mounted for this agent's framework (e.g. `/data` for
-        `openclaw`, `codex`, and `dsh`; `/zeroclaw-data` for `zeroclaw`;
-        `/opt/data` for `hermes`).
+        Lists a directory in the agent's persistent volume. If `path` is
+        omitted, the endpoint lists the volume root. The response's `root`
+        field indicates where the volume is mounted for this agent's framework
+        (for example, `/data` for `openclaw`, `codex`, and `dsh`;
+        `/zeroclaw-data` for `zeroclaw`; or `/opt/data` for `hermes`).
 
-        Entries include dotfiles, and non-ASCII names are returned as-is. In
-        the listings observed, directories came first, then files, each
-        sorted by name. A path that is a file returns `404 Not a directory`.
+        Entries include dotfiles, and non-ASCII names are returned as-is.
+        Directories appear first, followed by files, each sorted by name. If
+        `path` points to a file, the API returns `404 Not Found` with
+        `Not a directory`.
       operationId: listAgentFiles
       parameters:
         - name: path
@@ -861,7 +875,7 @@ paths:
         '403':
           $ref: '#/components/responses/MissingKey'
         '404':
-          description: The path doesn't exist or isn't a directory, or the agent wasn't found.
+          description: The path doesn't exist, isn't a directory, or the agent wasn't found.
           content:
             application/json:
               schema:
@@ -872,20 +886,14 @@ paths:
         status: verified
         date: '2026-10-05'
         notes: >-
-          The docs' example path /data returned 400 on a zeroclaw agent, whose
-          root is /zeroclaw-data. A call against a sleeping agent woke it
-          (2.7 agentss on 2026-10-03, 2.2 s on 2026-10-04). On 2026-10-04: a ../
-          path returned 400; a file path returned 404 "Not a directory"; a
-          .hidden file and a "café notes.md" file were both listed, after the
-          directories.
-          Volume roots were verified across templates on 2026-10-04/05: /data
-          for openclaw, codex, and dsh; /zeroclaw-data for zeroclaw; /opt/data
-          for hermes. The docs' example path /data returned 400 on a zeroclaw
-          agent and would fail on hermes, but succeeds on openclaw, codex, and
-          dsh. A call against a sleeping agent woke it (2.7 s on 2026-10-03,
-          2.2 s on 2026-10-04). On 2026-10-04: a ../ path returned 400; a
-          file path returned 404 "Not a directory"; a .hidden file and a "café
-          notes.md" file were both listed, after the directories.
+          Volume roots were verified across templates on October 4 and 5, 2026:
+          /data for openclaw, codex, and dsh; /zeroclaw-data for zeroclaw;
+          /opt/data for hermes. The documentation example path /data returned 400
+          on a zeroclaw agent and would fail on hermes, but succeeds on openclaw,
+          codex, and dsh. A call against a sleeping agent woke it (2.7 seconds
+          on 2026-10-03, 2.2 seconds on 2026-10-04). On 2026-10-04: a ../ path
+          returned 400; a file path returned 404 "Not a directory"; a .hidden
+          file and a "cafe-notes.md" file were both listed, after the directories.
 
   /api/agents/{agent_id}/files/download:
     parameters:
@@ -894,15 +902,15 @@ paths:
       tags: [Files]
       summary: Download a file
       description: |
-        Streams a file out of the agent's container as an attachment. Unlike
-        the other file endpoints, `path` can be any absolute path in the
-        container, not just the volume, because agents also write to `/tmp`
-        and workspace directories. The `Content-Type` is guessed from the
+        Streams a file from the agent's container as an attachment. Unlike other
+        file endpoints, `path` can be any absolute path in the container (not
+        only within the volume), because agents can also write to `/tmp` and
+        workspace directories. The `Content-Type` header is inferred from the
         file extension.
 
-        A directory returns `400`. **An empty (zero-byte) file returns
-        `404 File not found`**, even though List files shows it with
-        `size: 0`.
+        Specifying a directory returns `400 Bad Request`. **An empty
+        (zero-byte) file returns `404 Not Found` with `File not found`**, even
+        though List files reports `size: 0`.
       operationId: downloadAgentFile
       parameters:
         - name: path
@@ -932,7 +940,7 @@ paths:
                 type: string
                 format: binary
         '400':
-          description: The path is a directory.
+          description: The specified path is a directory.
           content:
             application/json:
               schema:
@@ -944,7 +952,7 @@ paths:
         '403':
           $ref: '#/components/responses/MissingKey'
         '404':
-          description: The file doesn't exist or is empty, or the agent wasn't found.
+          description: The file doesn't exist, is empty, or the agent wasn't found.
           content:
             application/json:
               schema:
@@ -960,8 +968,8 @@ paths:
           Downloaded a file from the volume (served as text/csv) and from /tmp
           (text/plain). On 2026-10-04: a directory returned 400 "path is a
           directory"; a zero-byte file written with write returned 404 "File
-          not found"; a file named "café notes.md" downloaded with the
-          filename* header shown above and Content-Type text/markdown. The
+          not found"; a file named "cafe-notes.md" downloaded with the
+          filename* header described in the response and Content-Type text/markdown. The
           docs page's example path /data/report.pdf returned 404. The 100 MB
           cap was not tested.
 
@@ -972,19 +980,20 @@ paths:
       tags: [Files]
       summary: Upload a file
       description: |
-        Uploads one file (up to 100 MB) into the agent's container. There are
-        two modes:
+        Uploads a file (up to 100 MB) into the agent's container. The endpoint
+        supports two modes:
 
-        - **To a directory**: send `dest_dir`. The file lands in that
-          directory with its original base name (a name like `../evil.csv`
-          is saved as `evil.csv`). The directory is created if it doesn't
-          exist. An existing file with the same name is overwritten without
-          warning. If you also send `message`, the file still goes to
-          `dest_dir` (whether the agent is notified wasn't checked).
-        - **As a chat attachment**: omit `dest_dir`. The file is saved to the
-          agent's inbox (`<volume>/workspace/inbox/`) with a Unix-timestamp
-          prefix, and the agent is notified in its current conversation.
-          Include `message` to send text with it.
+        - **To a directory:** Provide `dest_dir`. The file is saved to that
+          directory using its base name (for example, `../extra.csv` is saved as
+          `extra.csv`). If the destination directory doesn't exist, it is
+          created automatically. An existing file with the same name is
+          overwritten without warning. If you also include `message`, the file
+          is still saved to `dest_dir`.
+        - **As a chat attachment:** Omit `dest_dir`. The file is saved to the
+          agent's inbox with a Unix timestamp prefix added to the filename
+          (`<volume>/workspace/inbox/<timestamp>-<filename>`), and the agent is
+          notified in its active conversation. Include `message` to send
+          accompanying text.
 
         Uploaded files are never executed.
       operationId: uploadAgentFile
@@ -999,7 +1008,7 @@ paths:
                 contentType: application/octet-stream
       responses:
         '200':
-          description: The file was saved.
+          description: The file was uploaded successfully.
           content:
             application/json:
               schema:
@@ -1070,7 +1079,7 @@ paths:
               content: "# Notes\nhello\n"
       responses:
         '200':
-          description: The file was written.
+          description: The file was written successfully.
           content:
             application/json:
               schema:
@@ -1100,7 +1109,7 @@ paths:
         '422':
           $ref: '#/components/responses/ValidationFailed'
         '500':
-          description: The write failed, for example because `path` is an existing directory.
+          description: The file write failed, for example because `path` is an existing directory.
           content:
             application/json:
               schema:
@@ -1114,8 +1123,8 @@ paths:
           On 2026-10-04: empty content created a zero-byte file; numeric
           content returned 400 "content must be a string"; writing to an
           existing directory returned 500 "Write failed"; a ../ path returned
-          400; an unknown extra field was ignored; a non-ASCII name with a
-          space ("café notes.md") worked. On 2026-10-08: invalid JSON body
+          400; an unknown extra field was ignored; a hyphenated file name
+          ("cafe-notes.md") worked. On 2026-10-08: invalid JSON body
           returned 422 with a ValidationError array.
 
   /api/agents/{agent_id}/files/mkdir:
@@ -1125,9 +1134,9 @@ paths:
       tags: [Files]
       summary: Create a directory
       description: |
-        Creates a directory in the agent's volume, including any missing
-        parents (like `mkdir -p`). Creating a directory that already exists
-        succeeds.
+        Creates a directory in the agent's volume, including any missing parent
+        directories (similar to `mkdir -p`). Creating a directory that already
+        exists succeeds.
       operationId: createAgentDirectory
       requestBody:
         required: true
@@ -1139,7 +1148,7 @@ paths:
               path: /data/inbox
       responses:
         '200':
-          description: The directory exists.
+          description: The directory was created or already exists.
           content:
             application/json:
               schema:
@@ -1187,9 +1196,19 @@ paths:
       tags: [Files]
       summary: Move or rename a file
       description: |
-        Moves or renames a file or directory within the agent's volume. It
-        never overwrites: if `to` already exists the call returns `409`, and
-        if `from` doesn't exist it returns `404`.
+        Moves or renames a file or directory within the agent's volume. Both
+        `from` and `to` must be absolute paths inside the volume.
+
+        - **Rename:** If `from` and `to` are in the same directory but have
+          different names, the file or directory is renamed.
+        - **Move:** If `to` specifies a different directory path, the file or
+          directory is relocated to that directory. The item can also be
+          renamed in the same request.
+
+        The endpoint doesn't overwrite existing targets: if `to` already
+        exists, the call returns `409 Conflict`. If `from` doesn't exist, it
+        returns `404 Not Found`. Moving an item onto itself returns `400 Bad
+        Request`.
       operationId: moveAgentFile
       requestBody:
         required: true
@@ -1202,7 +1221,7 @@ paths:
               to: /data/archive/notes.md
       responses:
         '200':
-          description: The file was moved.
+          description: The file or directory was moved successfully.
           content:
             application/json:
               schema:
@@ -1229,7 +1248,7 @@ paths:
         '403':
           $ref: '#/components/responses/MissingKey'
         '404':
-          description: The source doesn't exist, or the agent wasn't found.
+          description: The source path doesn't exist, or the agent wasn't found.
           content:
             application/json:
               schema:
@@ -1237,7 +1256,7 @@ paths:
               example:
                 detail: Source not found
         '409':
-          description: The destination already exists.
+          description: The destination path already exists.
           content:
             application/json:
               schema:
@@ -1263,8 +1282,8 @@ paths:
       tags: [Files]
       summary: Delete a file or directory
       description: |
-        Deletes a file, or a directory and everything in it, from the agent's
-        volume. Deleting the volume root is refused with `400`.
+        Deletes a file, or a directory and its contents, from the agent's
+        volume. Deleting the volume root returns `400 Bad Request`.
       operationId: deleteAgentFile
       parameters:
         - name: path
@@ -1276,7 +1295,7 @@ paths:
           example: /data/old
       responses:
         '200':
-          description: The path was deleted.
+          description: The file or directory was deleted successfully.
           content:
             application/json:
               schema:
@@ -1320,29 +1339,31 @@ paths:
       tags: [Webhooks]
       summary: Invoke an agent by webhook
       description: |
-        This is an **incoming webhook**: you (or an external service) POST data
-        into Maritime, which delivers it to the agent.
+        This is an incoming webhook: you or an external service send data to
+        Maritime, which delivers it to the agent.
 
         Accepts any JSON payload and delivers it to the agent in the
-        background, waking the agent first if it is asleep. The call returns
-        as soon as the payload is accepted; it does not wait for the agent.
+        background, waking the agent first if it's asleep. The call returns as
+        soon as the payload is accepted; it doesn't wait for the agent to finish
+        processing.
 
-        Authenticate with the agent's invoke token, either in the
-        `X-Maritime-Webhook-Token` header or the `token` query parameter. Get
-        the token from [Get the webhook token](#operation/getWebhookToken).
-        Your `mk_` API key is not used here.
+        Authenticate using the agent's invoke token, either in the
+        `X-Maritime-Webhook-Token` header or in the `token` query parameter. To
+        retrieve the token, see
+        [Get the webhook token](#operation/getWebhookToken). Your personal
+        `mk_` API key isn't used for webhooks.
 
-        **Token enforcement is not on yet.** Calls with a missing or wrong
-        token are currently accepted. Maritime says unauthenticated calls are
-        being phased out, so always send the token.
+        **Token enforcement isn't active yet.** Requests with a missing or
+        invalid token are currently accepted. However, unauthenticated calls
+        will be phased out, so always send the token.
 
-        Invokes are rate limited to 30 per minute per agent and caller, and
-        share the agent's message budget. Over the limit, the call returns
-        `429` with a `Retry-After` header (in seconds); requests are not
-        queued.
+        Webhook calls are rate-limited to 30 calls per minute for each agent
+        and caller, and share the agent's message budget. When the limit is
+        exceeded, the call returns `429 Too Many Requests` with a `Retry-After`
+        header indicating wait time in seconds. Requests aren't queued.
 
-        The body isn't validated. Plain text, invalid JSON, an empty body and
-        a JSON array are all accepted with `200` and delivered.
+        The request body isn't validated. Plain text, invalid JSON, an empty
+        body, and a JSON array are all accepted with `200 OK` and delivered.
       operationId: invokeAgentWebhook
       security:
         - WebhookTokenHeader: []
@@ -1350,7 +1371,7 @@ paths:
         - {}
       requestBody:
         required: false
-        description: Any JSON object, delivered to the agent as-is. Other bodies are also accepted (see above).
+        description: Any JSON object, delivered to the agent as-is. Other body formats are also accepted, as described in the endpoint overview.
         content:
           application/json:
             schema:
@@ -1362,10 +1383,7 @@ paths:
       responses:
         '200':
           description: |
-            The payload was accepted for delivery. While token enforcement is
-            off, the response is the agent record (with `status` as of
-            acceptance). Once enforcement is on, Maritime says it will be
-            `{"status": "accepted"}`.
+            The payload was accepted for delivery.
           content:
             application/json:
               schema:
@@ -1375,10 +1393,10 @@ paths:
         '404':
           $ref: '#/components/responses/AgentNotFound'
         '429':
-          description: Rate limit exceeded (30 invokes per minute per agent and caller).
+          description: Rate limit exceeded (30 calls per minute for each agent and caller).
           headers:
             Retry-After:
-              description: Seconds to wait before retrying.
+              description: Number of seconds to wait before retrying.
               schema:
                 type: integer
               example: 44
@@ -1392,15 +1410,15 @@ paths:
         status: partial
         date: '2026-10-04'
         notes: >-
-          Header token, query token, no token and a wrong token all returned
-          200 with the agent record, and all four payloads reached the agent
-          (logged as "Webhook received with N keys", source "webhook"). No
-          deprecation header is sent. On 2026-10-04: after 8 invokes, a burst
-          of 35 got 22 x 200 then 13 x 429, so the 31st call in the minute was
-          refused, with Retry-After 44 and the detail shown above; text/plain,
-          invalid JSON and an empty body were delivered as "0 keys", and a
-          3-item array as "3 keys". The {"status": "accepted"} shape only
-          appears once Maritime enforces tokens, and wasn't observed.
+          Header token, query token, no token, and an incorrect token all
+          returned 200 with the agent record, and all four payloads reached the
+          agent (logged as "Webhook received with N keys", source "webhook"). No
+          deprecation header is sent. On 2026-10-04: after 8 invokes, a burst of
+          35 received 22 x 200 then 13 x 429, so the 31st call in the minute was
+          refused, with Retry-After 44 and the detail shown in the response;
+          text/plain, invalid JSON, and an empty body were delivered as "0 keys",
+          and a 3-item array as "3 keys". The {"status": "accepted"} format only
+          appears once Maritime enforces tokens, and was not observed.
 
   /api/webhooks/{agent_id}/token:
     parameters:
@@ -1416,7 +1434,7 @@ paths:
       operationId: getWebhookToken
       responses:
         '200':
-          description: The invoke token and URL.
+          description: The agent's invoke token and URL.
           content:
             application/json:
               schema:
@@ -1438,7 +1456,7 @@ paths:
         date: '2026-10-04'
         notes: >-
           Token value redacted in the example; its real format is not shown
-          here. Two calls on 2026-10-04 returned the same token.
+          in this specification. Two calls on 2026-10-04 returned the same token.
 
 components:
   securitySchemes:
@@ -1446,25 +1464,26 @@ components:
       type: http
       scheme: bearer
       description: |
-        A personal API key with the `mk_` prefix. Mint one in the dashboard
-        (**Settings → API keys**) or with `maritime keys create`.
+        A personal API key with the `mk_` prefix. Generate an API key in the
+        Maritime dashboard (navigate to **Settings** and select **API keys**)
+        or by running `maritime keys create`.
     WebhookTokenHeader:
       type: apiKey
       in: header
       name: X-Maritime-Webhook-Token
-      description: The agent's invoke token. Only used by the webhook invoke endpoint.
+      description: The agent's invoke token, passed as a request header. Used only by the webhook invoke endpoint.
     WebhookTokenQuery:
       type: apiKey
       in: query
       name: token
-      description: The agent's invoke token, as a query parameter. Only used by the webhook invoke endpoint.
+      description: The agent's invoke token, passed as a query parameter. Used only by the webhook invoke endpoint.
 
   parameters:
     AgentId:
       name: agent_id
       in: path
       required: true
-      description: The agent's ID (a UUID), as returned in the `id` field of an agent.
+      description: The agent's ID (a UUID), as returned in the `id` field of an agent object.
       schema:
         type: string
         format: uuid
@@ -1472,7 +1491,7 @@ components:
 
   responses:
     MissingKey:
-      description: No `Authorization` header was sent, or the key was sent without the `Bearer` prefix or in `X-API-Key`.
+      description: No `Authorization` header was sent, or the key was sent without the `Bearer` prefix or in an `X-API-Key` header.
       content:
         application/json:
           schema:
@@ -1480,7 +1499,7 @@ components:
           example:
             detail: Not authenticated
     InvalidKey:
-      description: The API key is invalid, expired, revoked, or lacks access to this surface (e.g. scoped keys on core routes).
+      description: The API key is invalid, expired, revoked, or lacks access to this surface (for example, scoped keys on core routes).
       content:
         application/json:
           schema:
@@ -1488,7 +1507,7 @@ components:
           example:
             detail: Invalid token
     AgentNotFound:
-      description: No agent with this ID exists on your account.
+      description: No agent with this ID exists in your account.
       content:
         application/json:
           schema:
@@ -1504,7 +1523,7 @@ components:
           example:
             detail: Invalid path
     ValidationFailed:
-      description: A required field or parameter is missing or has the wrong type.
+      description: A required field or parameter is missing or has an invalid type.
       content:
         application/json:
           schema:
@@ -1533,14 +1552,14 @@ components:
       properties:
         detail:
           type: string
-          description: A human-readable explanation, including the plan's limit and a billing link.
+          description: A human-readable explanation, including the plan's limit and a link to billing.
         code:
           type: string
-          description: 'A machine-readable reason. Observed value: `seat_limit` (the plan''s agent limit).'
+          description: A machine-readable reason code, such as `seat_limit` (indicating the plan agent limit has been reached).
           example: seat_limit
         upgrade:
           type: boolean
-          description: Whether upgrading the plan would lift the limit.
+          description: Whether upgrading the plan lifts the limit.
           example: true
 
     ValidationError:
@@ -1549,7 +1568,7 @@ components:
       properties:
         detail:
           type: array
-          description: One entry per invalid field or parameter.
+          description: A list of validation issues, with one entry per invalid field or parameter.
           items:
             $ref: '#/components/schemas/ValidationIssue'
 
@@ -1563,7 +1582,7 @@ components:
           example: missing
         loc:
           type: array
-          description: 'Where the problem is: the request part (`body`, `query` or `path`) followed by the field name.'
+          description: 'Location of the validation error: the request component (`body`, `query`, or `path`) followed by the field name.'
           items:
             oneOf:
               - type: string
@@ -1586,23 +1605,23 @@ components:
       properties:
         status:
           type: string
-          description: '`ok` when the API is up.'
+          description: '`ok` when the API is operational.'
           example: ok
         runtime:
           type: string
-          description: The runtime the API is running on.
+          description: The runtime environment of the API.
           example: fleet
         event_loop:
           type: object
-          description: Server event-loop latency statistics. Internal; may change.
+          description: Latency statistics for the server event loop. Internal; subject to change.
           additionalProperties: true
         leader:
           type: object
-          description: Scheduler leader-election state. Internal; may change.
+          description: Scheduler leader-election state. Internal; subject to change.
           additionalProperties: true
         deploy_queue:
           type: object
-          description: Deployment queue depth. Internal; may change.
+          description: Deployment queue depth statistics. Internal; subject to change.
           additionalProperties: true
 
     Template:
@@ -1611,19 +1630,19 @@ components:
       properties:
         id:
           type: string
-          description: The template ID. Pass it as `templateId` when creating an agent.
+          description: The template identifier. Pass it as `templateId` when creating an agent.
           example: zeroclaw
         name:
           type: string
-          description: Display name.
+          description: The display name of the template.
           example: ZeroClaw Agent
         framework:
           type: string
-          description: The agent framework the template runs. Templates built on a custom container report `custom`.
+          description: The agent framework used by the template. Templates built on a custom container return `custom`.
           example: zeroclaw
         image:
           type: string
-          description: The container image the template deploys.
+          description: The container image deployed by the template.
           example: ghcr.io/zeroclaw-labs/zeroclaw:v0.8.5-debian
         description:
           type: string
@@ -1631,7 +1650,7 @@ components:
           example: Ultra-lightweight Rust AI agent. <5MB RAM, instant startup.
         tags:
           type: array
-          description: Display tags.
+          description: Tags for categorizing the template.
           items:
             type: string
           example: [Lightweight, Rust]
@@ -1649,7 +1668,7 @@ components:
           type: string
           format: uri
           nullable: true
-          description: A demo video URL, if there is one.
+          description: A URL for a demonstration video, if available.
           example: https://maritime.sh/videos/templates/zeroclaw.mp4
         hidden:
           type: boolean
@@ -1667,7 +1686,7 @@ components:
         templateId:
           type: string
           nullable: true
-          description: The template to create from (see List templates). Sets `framework` automatically.
+          description: The template used to create the agent (see [List templates](#operation/listTemplates)). Sets `framework` automatically.
           example: zeroclaw
         description:
           type: string
@@ -1680,11 +1699,15 @@ components:
         externalId:
           type: string
           nullable: true
-          description: Your own identifier for the user this agent belongs to. Usage reports include it as `externalUserId`.
+          description: Your identifier for the user this agent belongs to. Usage reports include it as `externalUserId`.
         framework:
           type: string
           default: custom
-          description: The agent framework. Set to `custom` when deploying your own repo or image; otherwise let `templateId` set it.
+          description: |
+            The agent framework. When creating an agent from a template, omit
+            this field; the platform determines the framework automatically from
+            `templateId`. When deploying your own container image or GitHub
+            repository without a template, set this field to `custom`.
           example: custom
         githubRepo:
           type: string
@@ -1709,15 +1732,15 @@ components:
         useMaritimeLlm:
           type: boolean
           default: false
-          description: Inject Maritime's metered LLM proxy credentials (`OPENAI_API_KEY` and `OPENAI_BASE_URL`) into the agent.
+          description: Whether to inject Maritime's metered LLM proxy credentials (`OPENAI_API_KEY` and `OPENAI_BASE_URL`) into the agent.
         tier:
           type: string
           default: always_on
-          description: The agent's hosting tier. Only `always_on` has been observed.
+          description: 'The agent''s hosting tier. Supported value: `always_on`.'
         memMb:
           type: integer
           nullable: true
-          description: Memory in MB. Leave unset for the default size.
+          description: Memory in megabytes. Leave unset for the default size.
         vcpus:
           type: number
           nullable: true
@@ -1725,7 +1748,7 @@ components:
         diskGb:
           type: number
           nullable: true
-          description: Persistent volume size in GB. Leave unset for the default size.
+          description: Persistent volume size in gigabytes. When omitted or null, the platform provisions the default storage size allocated for the agent tier (returned as null in `diskMb`).
         idleTtlSeconds:
           type: integer
           nullable: true
@@ -1741,7 +1764,7 @@ components:
         healthCheckPath:
           type: string
           nullable: true
-          description: For custom containers, the path that answers health checks (for example `/health`).
+          description: For custom containers, the path that answers health checks (for example, `/health`).
         hasWebUi:
           type: boolean
           default: true
@@ -1749,30 +1772,30 @@ components:
         publicWeb:
           type: boolean
           default: false
-          description: Serve the agent on a public, no-login HTTPS URL.
+          description: Whether to serve the agent on a public, unauthenticated HTTPS URL.
         autoPair:
           type: boolean
           default: true
-          description: Not described in the public docs.
+          description: Whether to automatically authorize and pair client connections with the agent upon deployment.
         desktop:
           type: boolean
           default: false
-          description: Not described in the public docs. The resulting agent field is `desktopEnabled`.
+          description: Whether to enable desktop environment support. When enabled, sets `desktopEnabled` to `true` on the agent.
         gatewayPassword:
           type: string
           nullable: true
-          description: Not described in the public docs.
+          description: Password for gateway authentication, if required by the deployment.
         serverId:
           type: string
           nullable: true
-          description: Not described in the public docs.
+          description: Identifier of the server host running the agent.
         uploadS3Key:
           type: string
           nullable: true
-          description: Not described in the public docs. Appears to reference an uploaded ZIP for ZIP deploys.
+          description: S3 object key referencing an uploaded archive for direct deployment.
         addOns:
           type: array
-          description: Not described in the public docs. Billing add-ons include always-on, extra RAM and extra SSD.
+          description: Billing add-ons enabled for the agent, including extra RAM or persistent storage.
           items:
             type: string
 
@@ -1789,7 +1812,7 @@ components:
         isSecret:
           type: boolean
           default: true
-          description: Store the value encrypted and hide it in the dashboard.
+          description: Whether to store the value encrypted and hide it in the dashboard.
 
     Agent:
       type: object
@@ -1798,7 +1821,7 @@ components:
         id:
           type: string
           format: uuid
-          description: The agent's ID.
+          description: The unique identifier (UUID) of the agent.
         name:
           type: string
         description:
@@ -1813,29 +1836,31 @@ components:
           description: Your identifier for the end user this agent belongs to, if set.
         framework:
           type: string
-          description: The agent framework, for example `openclaw`, `zeroclaw`, `hermes`, `dsh` or `custom`.
+          description: The agent framework, for example `openclaw`, `zeroclaw`, `hermes`, `dsh`, or `custom`.
           example: zeroclaw
         tier:
           type: string
+          description: 'The agent hosting tier. Supported value: `always_on`.'
           example: always_on
         status:
           type: string
           description: |
-            The agent's state. Observed values: `deploying` (just created),
-            `active` (running and ready) and `sleeping` (idle; wakes on the
-            next call). Other values, such as error states, may exist but
-            were not observed.
+            The lifecycle state of the agent. Valid values:
+            - `deploying`: The agent is provisioning and starting up.
+            - `active`: The agent is running and ready to receive requests.
+            - `sleeping`: The agent is idle and paused; wakes automatically on the next request.
           example: active
         templateId:
           type: string
           nullable: true
-          description: The template the agent was created from.
+          description: The identifier of the template used to create the agent.
           example: zeroclaw
         githubRepo:
           type: string
           nullable: true
         autoPair:
           type: boolean
+          description: Whether automatic client pairing was enabled for the agent.
         exposedPort:
           type: integer
           nullable: true
@@ -1857,10 +1882,10 @@ components:
           type: boolean
         invocationCount:
           type: integer
-          description: How many times the agent has been invoked (chat and webhook).
+          description: Number of times the agent has been invoked through chat and webhooks.
         totalComputeSeconds:
           type: integer
-          description: Total seconds the agent has been awake.
+          description: Total number of seconds the agent has been awake.
         memMb:
           type: integer
           nullable: true
@@ -1924,8 +1949,9 @@ components:
           type: string
           nullable: true
           description: |
-            An ID of your choosing to continue an earlier thread. Whether the
-            agent remembers earlier messages depends on its framework.
+            An identifier of your choosing to continue an earlier thread.
+            Whether the agent remembers earlier messages depends on its
+            framework.
           example: support-thread-42
 
     ChatResponse:
@@ -1942,7 +1968,7 @@ components:
       required: [command]
       properties:
         command:
-          description: The command to run, as argv tokens (quoted for you) or a raw shell string.
+          description: The command to run, as an argument array (tokens are quoted automatically) or a raw shell string.
           oneOf:
             - type: array
               minItems: 1
@@ -1957,10 +1983,9 @@ components:
           maximum: 120
           default: 60
           description: |
-            Seconds before the command is killed. Values above 120 aren't
-            rejected; they are clamped to 120. A negative value fails at once
-            with `502`. `0`, decimals and numeric strings are accepted without
-            error; how they are interpreted isn't documented.
+            Timeout in seconds before the command is terminated. Values greater
+            than 120 are clamped to 120. A negative value returns `502 Bad
+            Gateway`.
           example: 30
 
     ExecResponse:
@@ -1969,16 +1994,15 @@ components:
       properties:
         exitCode:
           type: integer
-          description: The command's exit code.
+          description: The command exit code.
           example: 0
         stdout:
           type: string
-          description: Combined stdout and stderr, capped at 256 KiB. Truncated output keeps the last 256 KiB, prefixed with `[output truncated]\n`.
+          description: Combined standard output and standard error, limited to 256 KiB. Truncated output retains the last 256 KiB, prefixed with `[output truncated]\n`.
         stderr:
           type: string
-          description: Currently always empty, because stderr is merged into `stdout`.
+          description: Always empty, because standard error is merged into `stdout`.
           example: ''
-
     LogEntry:
       type: object
       required: [id, agentId, level, message, timestamp, source]
@@ -2001,7 +2025,7 @@ components:
           description: When the entry was written. Use it as `before` to fetch older entries.
         source:
           type: string
-          description: 'Where the entry came from. Observed values: `system` (platform events), `container` (the agent process) and `webhook`.'
+          description: 'The source of the log entry. Supported values include `system` (platform events), `container` (the agent process), and `webhook` (webhook activity).'
           example: system
 
     FileListing:
@@ -2015,9 +2039,10 @@ components:
         root:
           type: string
           description: |
-            The agent's volume root (e.g. `/data` for `openclaw`/`codex`/`dsh`,
-            `/zeroclaw-data` for `zeroclaw`, `/opt/data` for `hermes`). Use it
-            to build paths for the other file endpoints.
+            The agent's volume root (for example, `/data` for `openclaw`,
+            `codex`, and `dsh`; `/zeroclaw-data` for `zeroclaw`; or `/opt/data`
+            for `hermes`). Use this value to build paths for the other file
+            endpoints.
           example: /zeroclaw-data
         entries:
           type: array
@@ -2053,11 +2078,11 @@ components:
           description: The file to upload. Maximum 100 MB.
         dest_dir:
           type: string
-          description: A directory in the volume to save the file to. Omit it to send the file as a chat attachment.
+          description: A directory within the volume where the file is saved. Omit this field to send the file as a chat attachment.
           example: /data/inbox
         message:
           type: string
-          description: Text sent to the agent along with a chat attachment. Intended for when `dest_dir` is omitted; with `dest_dir` the file still goes to that directory.
+          description: Text sent to the agent along with a chat attachment. Intended for when `dest_dir` is omitted. If `dest_dir` is specified, the file is still saved to that directory.
           example: Here is the report, how many rows does it have?
 
     UploadResponse:
@@ -2069,7 +2094,7 @@ components:
           example: true
         path:
           type: string
-          description: Where the file was saved.
+          description: The path where the file was saved.
           example: /data/inbox/report.csv
         name:
           type: string
@@ -2086,7 +2111,7 @@ components:
       properties:
         path:
           type: string
-          description: An absolute path inside the agent's volume.
+          description: An absolute path within the agent's volume.
           example: /data/inbox
 
     WriteFileRequest:
@@ -2095,7 +2120,7 @@ components:
       properties:
         path:
           type: string
-          description: An absolute file path inside the agent's volume.
+          description: An absolute file path within the agent's volume.
           example: /data/notes.md
         content:
           type: string
@@ -2150,7 +2175,7 @@ components:
           format: uuid
         token:
           type: string
-          description: The invoke token. Keep it secret.
+          description: The invoke token. Treat this value as a secret.
         header:
           type: string
           description: The header name to send the token in.
@@ -2158,10 +2183,10 @@ components:
         url:
           type: string
           format: uri
-          description: The invoke URL with the token already in its query string.
+          description: The invoke URL with the token included as a query string.
         source:
           type: string
-          description: How the token was produced. Observed value `derived`.
+          description: How the token was generated, such as `derived`.
           example: derived
 
     WebhookAccepted:
