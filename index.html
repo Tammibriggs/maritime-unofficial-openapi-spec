@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Maritime Agents API Reference</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <meta
+      name="description"
+      content="Comprehensive reference documentation for the Maritime Agents REST API."
+    />
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+      }
+
+      /* Hide Client Libraries components, tabs, and rows */
+      .client-libraries,
+      .client-libraries-heading,
+      .client-libraries-content,
+      .client-libraries-list,
+      .client-libraries-tabs,
+      .client-libraries-more,
+      .client-libraries-row,
+      .selected-client,
+      [class*="client-libraries"],
+      .introduction-card-item:has([class*="client-libraries"]),
+      .introduction-card-row:has([class*="client-libraries"]) {
+        display: none !important;
+      }
+
+      /* Fallback Quickstart item styling in sidebar */
+      #scalar-custom-quickstart,
+      .custom-quickstart-item {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+
+      #scalar-custom-quickstart a,
+      .custom-quickstart-item a {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        color: var(--scalar-color-2, #9ca3af);
+        font-size: 13.5px;
+        font-weight: 500;
+        text-decoration: none;
+        border-radius: 6px;
+        transition: all 0.15s ease;
+      }
+
+      #scalar-custom-quickstart a:hover,
+      .custom-quickstart-item a:hover {
+        color: var(--scalar-color-1, #f9fafb);
+        background: var(--scalar-background-2, rgba(255, 255, 255, 0.05));
+      }
+
+      /* Temporarily hide OpenAPI spec download button */
+      .download-button,
+      [class*="download-button"],
+      button[aria-label*="Download" i],
+      a[aria-label*="Download" i],
+      a[download] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <script
+      id="api-reference"
+      data-url="./maritime_openapi.yaml"
+      data-configuration='{
+        "theme": "default",
+        "layout": "modern",
+        "showSidebar": true,
+        "defaultOpenAllTags": true,
+        "maxVisibleRequestBodyProperties": 0,
+        "proxyUrl": "https://proxy.scalar.com",
+        "searchHotKey": "k",
+        "documentDownloadType": "none",
+        "hideDownloadButton": true,
+        "metaData": {
+          "title": "Maritime Agents API Reference",
+          "description": "Comprehensive reference documentation for the Maritime Agents REST API."
+        }
+      }'>
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+
+    <script>
+      function cleanScalarUI() {
+        // 1. Hide "Client Libraries" text item in the sidebar and anywhere in page
+        document.querySelectorAll('*').forEach((el) => {
+          if (el.children.length === 0) {
+            const text = el.textContent ? el.textContent.trim() : '';
+            if (/^client\s+libraries$/i.test(text)) {
+              const item = el.closest('.introduction-card-item') || el.closest('.introduction-card-row') || el.closest('li') || el.closest('button') || el.closest('[class*="item"]') || el.parentElement || el;
+              item.style.setProperty('display', 'none', 'important');
+            }
+          }
+        });
+
+        // 2. Hide Client Libraries content rows (without hiding the whole .introduction-card wrapper)
+        document.querySelectorAll('.client-libraries, .selected-client, [class*="client-libraries"]').forEach((el) => {
+          const item = el.closest('.introduction-card-item') || el.closest('.introduction-card-row') || el.closest('[class*="item"]') || el;
+          item.style.setProperty('display', 'none', 'important');
+        });
+
+        // 3. Keep the introduction card container visible for Scalar's native Server component, while hiding Authentication and Client Libraries items
+        const introCardContainer = document.querySelector('.introduction-card, [class*="introduction-card"]');
+        if (introCardContainer) {
+          introCardContainer.style.removeProperty('display');
+
+          introCardContainer.querySelectorAll('.introduction-card-item, .introduction-card-row, [class*="card-item"]').forEach((item) => {
+            const text = item.textContent || '';
+            if (/authentication|security/i.test(text) || /client\s+libraries/i.test(text)) {
+              item.style.setProperty('display', 'none', 'important');
+            }
+          });
+        }
+
+        // 4. Temporarily hide any OpenAPI spec download button elements in the introduction section
+        document.querySelectorAll('button, a').forEach((el) => {
+          const text = el.textContent ? el.textContent.trim() : '';
+          const aria = el.getAttribute('aria-label') || '';
+          if (/download\s+(openapi|spec|document|file)/i.test(text) || /^download$/i.test(text) || /download/i.test(aria)) {
+            const introParent = el.closest('.introduction, [id*="introduction"], [data-section-id*="introduction"], main section:first-of-type, .introduction-card');
+            if (introParent) {
+              el.style.setProperty('display', 'none', 'important');
+            }
+          }
+        });
+
+        // 5. Ensure "Quickstart" is the first link in the sidebar and navigates to quickstart.html
+        const sidebar = document.querySelector('.references-sidebar, .t-doc__sidebar, aside, [class*="sidebar"]');
+        if (sidebar) {
+          const firstGroup = sidebar.querySelector('ul, [class*="group"], nav');
+          if (firstGroup) {
+            let customItem = document.getElementById('scalar-custom-quickstart');
+
+            if (!customItem) {
+              const sampleItem = firstGroup.firstElementChild;
+              if (sampleItem) {
+                // Clone existing item so it inherits exact typography, layout, and classes
+                customItem = sampleItem.cloneNode(true);
+                customItem.id = 'scalar-custom-quickstart';
+
+                // Strip active/selected styling from the clone
+                customItem.classList.remove('active', 'selected');
+                customItem.querySelectorAll('.active, [class*="active"], [class*="selected"]').forEach((el) => {
+                  el.classList.remove('active', 'selected');
+                  el.removeAttribute('aria-current');
+                });
+
+                // Update anchor / text to Quickstart
+                const anchor = customItem.tagName === 'A' ? customItem : customItem.querySelector('a');
+                if (anchor) {
+                  anchor.href = './quickstart.html';
+                  anchor.setAttribute('href', './quickstart.html');
+                  anchor.removeAttribute('aria-current');
+
+                  // Replace text content while preserving any icon element
+                  const textEl = anchor.querySelector('[class*="text"], [class*="title"], span') || anchor;
+                  textEl.textContent = 'Quickstart';
+                } else {
+                  customItem.textContent = 'Quickstart';
+                }
+              } else {
+                // Fallback creation
+                customItem = document.createElement('li');
+                customItem.id = 'scalar-custom-quickstart';
+                customItem.className = 'sidebar-item custom-quickstart-item';
+
+                const customLink = document.createElement('a');
+                customLink.href = './quickstart.html';
+                customLink.className = 'sidebar-heading';
+                customLink.textContent = 'Quickstart';
+
+                customItem.appendChild(customLink);
+              }
+
+              // Intercept click in capture phase to guarantee direct navigation to quickstart.html
+              customItem.addEventListener('click', (e) => {
+                if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  window.location.href = './quickstart.html';
+                }
+              }, true);
+
+              firstGroup.insertBefore(customItem, firstGroup.firstElementChild);
+            } else if (firstGroup.firstElementChild !== customItem) {
+              // Ensure Quickstart stays the very first link
+              firstGroup.insertBefore(customItem, firstGroup.firstElementChild);
+            }
+
+            // 5. Clean up sub-items under Introduction in sidebar (such as nested Authentication or duplicate items)
+            firstGroup.querySelectorAll('*').forEach((el) => {
+              if (el.children.length === 0) {
+                const text = el.textContent?.trim();
+                if (/^authentication$/i.test(text)) {
+                  const item = el.closest('li') || el.closest('button') || el.closest('[class*="item"]') || el.parentElement;
+                  if (item && !item.closest('[id*="tag/Authentication"]') && !item.closest('[href*="#tag/Authentication"]')) {
+                    item.style.setProperty('display', 'none', 'important');
+                  }
+                }
+                if (/^quickstart$/i.test(text)) {
+                  const item = el.closest('li') || el.closest('button') || el.closest('[class*="item"]') || el.parentElement;
+                  if (item && item !== customItem && !item.contains(customItem) && !customItem.contains(item)) {
+                    item.style.setProperty('display', 'none', 'important');
+                  }
+                }
+              }
+            });
+          }
+        }
+      }
+
+      const observer = new MutationObserver(cleanScalarUI);
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+      document.addEventListener('DOMContentLoaded', cleanScalarUI);
+      window.addEventListener('load', cleanScalarUI);
+
+      const intervalId = setInterval(cleanScalarUI, 300);
+      setTimeout(() => clearInterval(intervalId), 10000);
+    </script>
+  </body>
+</html>
+

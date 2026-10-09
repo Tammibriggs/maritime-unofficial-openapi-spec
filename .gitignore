@@ -1,0 +1,10 @@
+# Only the OpenAPI document is tracked; everything else stays local.
+*
+!.gitignore
+!maritime_openapi.yaml
+!TESTING.md
+!GAP_ANALYSIS.md
+!index.html
+!quickstart.html
+!.github/
+!.github/**

@@ -8,6 +8,9 @@ info:
     files in and out of their persistent volumes, and trigger them from
     webhooks.
 
+    New to Maritime? Follow the [Quickstart Guide](quickstart.html) to go from
+    an empty environment to a working AI agent in three steps.
+
     This document covers the 18 core agent operations. It's based on the
     [Maritime REST API documentation](https://maritime.sh/docs/api) and the
     [Maritime OpenAPI specification](https://api.maritime.sh/openapi.json), and
@@ -15,113 +18,6 @@ info:
     operation has an `x-verification` block that records what was confirmed
     live and what was taken from the docs without verification.
 
-    ## Quickstart
-
-    Go from an empty environment to a working AI agent in three steps.
-
-    ### 1. Set your API key
-
-    In the Maritime dashboard, go to the
-    [Maritime dashboard settings](https://maritime.sh/settings) and generate a
-    key in the **API keys** section. Alternatively, run `maritime keys create`.
-    Then export the key in your shell:
-
-    ```bash
-    export MARITIME_API_KEY="API_KEY"
-    ```
-
-    Replace `API_KEY` with your API key, which starts with `mk_`.
-
-    ### 2. Create an agent
-
-    Create an agent from a ready-made template, such as `openclaw`:
-
-    ```bash
-    curl -s -X POST https://api.maritime.sh/api/agents \
-      -H "Authorization: Bearer $MARITIME_API_KEY" \
-      -H "Content-Type: application/json" \
-      -d '{"name": "my-first-agent", "templateId": "openclaw"}'
-    ```
-
-    The API returns `201 Created` with `status: deploying`. Copy the `id` value from the response; you need it in the next step. The agent's status changes to `active` in about 20 to 40 seconds.
-
-    ### 3. Send a message
-
-    Chat with your deployed agent:
-
-    ```bash
-    curl -s -X POST https://api.maritime.sh/api/agents/AGENT_ID/chat \
-      -H "Authorization: Bearer $MARITIME_API_KEY" \
-      -H "Content-Type: application/json" \
-      -d '{"message": "Hello! Introduce yourself."}'
-    ```
-
-    Replace `AGENT_ID` with the `id` value from the previous step.
-
-    The call waits for the agent to reply, and then returns `200 OK` with `{"response": "..."}`. If the agent is asleep, the message wakes it automatically.
-
-    ## Authentication
-
-    Send your personal API key as a bearer token in the `Authorization` header:
-
-    ```http
-    Authorization: Bearer API_KEY
-    ```
-
-    Replace `API_KEY` with your API key, which starts with `mk_`.
-
-    You can generate an API key in two ways:
-    - **Dashboard:** Go to [Maritime dashboard settings](https://maritime.sh/settings) and generate a key in the **API keys** section. Keys generated here have full access by default.
-    - **CLI:** If you have the Maritime CLI installed and are signed in with `maritime login`, run `maritime keys create`.
-
-    ### Credentials and scope behavior
-
-    - **Missing key (`403`):** Omitting the `Authorization` header returns `403 Forbidden` with `{"detail": "Not authenticated"}`. The key must use the `Bearer` scheme; sending the key without `Bearer`, or in an `X-API-Key` header, returns `403`.
-    - **Invalid, expired, or revoked key (`401`):** An invalid token, an expired key, or a revoked key returns `401 Unauthorized` with `{"detail": "Invalid token"}`.
-    - **Key scopes:** You can create keys with restricted scopes (`provision`, `deploy`, `secrets`, and `manage`), but restricted keys are meant for the `/api/v1` partner API. If you use a scoped key with the core agent API (`/api/agents/*`), the API returns `401` with `Invalid token`. Use a full-access key for the core agent API.
-    - **Public endpoints:** Public endpoints (`/health`, `/api/templates`, and `/api/webhooks/{agent_id}`) don't require authentication and ignore invalid tokens.
-
-    ## Sleeping agents
-
-    Agents sleep when idle. Chat, command, log, file, and webhook requests wake a sleeping agent automatically, which adds about 1 to 3 seconds to the first call. You rarely need to start an agent yourself.
-
-    ## Rate limits and thresholds
-
-    Maritime enforces the following limits on webhook calls, awake machines, commands, file transfers, and log queries:
-
-    | Resource or operation | Limit | Behavior when exceeded |
-    |---|---|---|
-    | **Webhook calls** (`POST /api/webhooks/{agent_id}`) | 30 calls per minute for each agent and caller | Returns `429 Too Many Requests` with a `Retry-After` header that gives the wait time in seconds. |
-    | **REST API requests** (agents, files, and logs) | No fixed requests-per-minute limit | Normal create, read, update, delete, and polling requests aren't aggressively rate-limited. |
-    | **Concurrently awake machines** | Free: 1, Starter: 5, Growth: 25, Scale: 60 | Chatting with a sleeping agent at capacity returns `200 OK` with an advisory string that explains the limit, and the agent stays asleep. File operations wake the machine directly. |
-    | **Command timeout** (`POST /api/agents/{agent_id}/exec`) | Default 60 seconds; maximum 120 seconds | Values greater than 120 are clamped to 120 seconds. Commands that run longer than the timeout return `502` with `Exec failed`. |
-    | **Command output** (`POST /api/agents/{agent_id}/exec`) | 262,144 bytes (256 KiB) | The API drops the start of the output and keeps the last 256 KiB, prefixed with `[output truncated]`. |
-    | **File transfer size** (upload and download) | 100 MB per file | Uploads larger than 100 MB are rejected. |
-    | **Log entries per request** (`GET /api/agents/{agent_id}/logs`) | 1,000 entries | A `limit` greater than 1,000 returns `422 Unprocessable Entity`. |
-
-    ## Status and error codes
-
-    Errors return JSON with a `detail` field. For most errors, `detail` is a human-readable string. For request validation failures on typed bodies and query parameters, `detail` is an array of validation issues (status `422`).
-
-    | Status | Meaning | `detail` format | Example and resolution |
-    |---|---|---|---|
-    | `400 Bad Request` | Invalid body for exec or for the file write, mkdir, or move endpoints; a path outside the volume; or a directory passed to download | String | `{"detail": "Invalid path"}`. Check the request parameters and make sure the path is inside the volume. |
-    | `401 Unauthorized` | Invalid, expired, revoked, or unsupported scoped API key | String | `{"detail": "Invalid token"}`. Check your API key, or generate a new one in the dashboard settings. |
-    | `402 Payment Required` | Your plan's agent limit is reached | Object (`PlanLimitError`) | `{"detail": "...", "code": "seat_limit", "upgrade": true}`. Delete an unused agent or upgrade your plan. |
-    | `403 Forbidden` | Missing `Authorization` header or missing `Bearer` prefix | String | `{"detail": "Not authenticated"}`. Include `Authorization: Bearer API_KEY`. |
-    | `404 Not Found` | Agent not found, path not found on the volume, or downloaded file is empty | String | `{"detail": "Agent AGENT_ID not found"}`. Check the agent ID or container path. |
-    | `405 Method Not Allowed` | Unsupported HTTP method on the route | String (empty or text) | Check the `Allow` header and use the correct HTTP method. |
-    | `409 Conflict` | Agent name already taken, or the destination of a file move already exists | String | `{"detail": "You already have an agent named..."}`. Choose a different name or destination. |
-    | `422 Unprocessable Entity` | Schema validation error (missing fields or wrong field types) or invalid JSON | Array of issues | `{"detail": [{"loc": ["body", "name"], "msg": "Field required", ...}]}`. |
-    | `429 Too Many Requests` | Webhook rate limit exceeded (30 calls per minute) | String | `{"detail": "Rate limit exceeded: 30/min for public-webhook"}`. Wait the number of seconds in `Retry-After`, and then retry. |
-    | `500 Internal Server Error` | Server-side write or mkdir failure (for example, writing to an existing directory) | String | `{"detail": "Write failed"}`. Make sure that the target path isn't an existing directory (for write) or an existing file (for mkdir). |
-    | `502 Bad Gateway` | Command timed out (maximum 120 seconds) or couldn't run in the VM | String | `{"detail": "Exec failed"}`. Check the agent's status, or increase `timeout`. |
-
-    ### Global behaviors
-
-    - **Method not allowed (`405`):** Unsupported methods return `405` with an `Allow` header. The header might list only some of the valid methods. For example, `PUT /api/agents` returns `Allow: GET`, even though `POST` is also supported.
-    - **Unknown query parameters and fields:** Extra query parameters and unknown JSON fields in request bodies are ignored.
-    - **Browser access (CORS):** Direct browser calls from external origins return `400 Disallowed CORS origin` on the cross-origin resource sharing (CORS) preflight, and normal responses have no `Access-Control-Allow-Origin` header. Call the API from a backend service instead.
   contact:
     name: Maritime documentation
     url: https://maritime.sh/docs/api
@@ -131,6 +27,73 @@ servers:
 security:
   - BearerAuth: []
 tags:
+  - name: Authentication
+    description: |
+      Send your personal API key as a bearer token in the `Authorization` header:
+
+      ```http
+      Authorization: Bearer API_KEY
+      ```
+
+      Replace `API_KEY` with your API key, which starts with `mk_`.
+
+      You can generate an API key in two ways:
+      - **Dashboard:** Go to [Maritime dashboard settings](https://maritime.sh/settings) and generate a key in the **API keys** section. Keys generated here have full access by default.
+      - **CLI:** If you have the Maritime CLI installed and are signed in with `maritime login`, run `maritime keys create`.
+
+      ### Credentials and scope behavior
+
+      - **Missing key (`403`):** Omitting the `Authorization` header returns `403 Forbidden` with `{"detail": "Not authenticated"}`. The key must use the `Bearer` scheme; sending the key without `Bearer`, or in an `X-API-Key` header, returns `403`.
+      - **Invalid, expired, or revoked key (`401`):** An invalid token, an expired key, or a revoked key returns `401 Unauthorized` with `{"detail": "Invalid token"}`.
+      - **Key scopes:** You can create keys with restricted scopes (`provision`, `deploy`, `secrets`, and `manage`), but restricted keys are meant for the `/api/v1` partner API. If you use a scoped key with the core agent API (`/api/agents/*`), the API returns `401` with `Invalid token`. Use a full-access key for the core agent API.
+      - **Public endpoints:** Public endpoints (`/health`, `/api/templates`, and `/api/webhooks/{agent_id}`) don't require authentication and ignore invalid tokens.
+
+  - name: Rate Limits
+    description: |
+      ### Sleeping agents
+
+      Agents sleep when idle. Chat, command, log, file, and webhook requests wake a sleeping agent automatically, which adds about 1 to 3 seconds to the first call. You rarely need to start an agent yourself.
+
+      ### Rate limits and thresholds
+
+      Maritime enforces the following limits on webhook calls, awake machines, commands, file transfers, and log queries:
+
+      | Resource or operation | Limit | Behavior when exceeded |
+      |---|---|---|
+      | **Webhook calls** (`POST /api/webhooks/{agent_id}`) | 30 calls per minute for each agent and caller | Returns `429 Too Many Requests` with a `Retry-After` header that gives the wait time in seconds. |
+      | **REST API requests** (agents, files, and logs) | No fixed requests-per-minute limit | Normal create, read, update, delete, and polling requests aren't aggressively rate-limited. |
+      | **Concurrently awake machines** | Free: 1, Starter: 5, Growth: 25, Scale: 60 | Chatting with a sleeping agent at capacity returns `200 OK` with an advisory string that explains the limit, and the agent stays asleep. File operations wake the machine directly. |
+      | **Command timeout** (`POST /api/agents/{agent_id}/exec`) | Default 60 seconds; maximum 120 seconds | Values greater than 120 are clamped to 120 seconds. Commands that run longer than the timeout return `502` with `Exec failed`. |
+      | **Command output** (`POST /api/agents/{agent_id}/exec`) | 262,144 bytes (256 KiB) | The API drops the start of the output and keeps the last 256 KiB, prefixed with `[output truncated]`. |
+      | **File transfer size** (upload and download) | 100 MB per file | Uploads larger than 100 MB are rejected. |
+      | **Log entries per request** (`GET /api/agents/{agent_id}/logs`) | 1,000 entries | A `limit` greater than 1,000 returns `422 Unprocessable Entity`. |
+
+  - name: Errors
+    description: |
+      ### Status and error codes
+
+      Errors return JSON with a `detail` field. For most errors, `detail` is a human-readable string. For request validation failures on typed bodies and query parameters, `detail` is an array of validation issues (status `422`).
+
+      | Status | Meaning | `detail` format | Example and resolution |
+      |---|---|---|---|
+      | `400 Bad Request` | Invalid body for exec or for the file write, mkdir, or move endpoints; a path outside the volume; or a directory passed to download | String | `{"detail": "Invalid path"}`. Check the request parameters and make sure the path is inside the volume. |
+      | `401 Unauthorized` | Invalid, expired, revoked, or unsupported scoped API key | String | `{"detail": "Invalid token"}`. Check your API key, or generate a new one in the dashboard settings. |
+      | `402 Payment Required` | Your plan's agent limit is reached | Object (`PlanLimitError`) | `{"detail": "...", "code": "seat_limit", "upgrade": true}`. Delete an unused agent or upgrade your plan. |
+      | `403 Forbidden` | Missing `Authorization` header or missing `Bearer` prefix | String | `{"detail": "Not authenticated"}`. Include `Authorization: Bearer API_KEY`. |
+      | `404 Not Found` | Agent not found, path not found on the volume, or downloaded file is empty | String | `{"detail": "Agent AGENT_ID not found"}`. Check the agent ID or container path. |
+      | `405 Method Not Allowed` | Unsupported HTTP method on the route | String (empty or text) | Check the `Allow` header and use the correct HTTP method. |
+      | `409 Conflict` | Agent name already taken, or the destination of a file move already exists | String | `{"detail": "You already have an agent named..."}`. Choose a different name or destination. |
+      | `422 Unprocessable Entity` | Schema validation error (missing fields or wrong field types) or invalid JSON | Array of issues | `{"detail": [{"loc": ["body", "name"], "msg": "Field required", ...}]}`. |
+      | `429 Too Many Requests` | Webhook rate limit exceeded (30 calls per minute) | String | `{"detail": "Rate limit exceeded: 30/min for public-webhook"}`. Wait the number of seconds in `Retry-After`, and then retry. |
+      | `500 Internal Server Error` | Server-side write or mkdir failure (for example, writing to an existing directory) | String | `{"detail": "Write failed"}`. Make sure that the target path isn't an existing directory (for write) or an existing file (for mkdir). |
+      | `502 Bad Gateway` | Command timed out (maximum 120 seconds) or couldn't run in the VM | String | `{"detail": "Exec failed"}`. Check the agent's status, or increase `timeout`. |
+
+      ### Global behaviors
+
+      - **Method not allowed (`405`):** Unsupported methods return `405` with an `Allow` header. The header might list only some of the valid methods. For example, `PUT /api/agents` returns `Allow: GET`, even though `POST` is also supported.
+      - **Unknown query parameters and fields:** Extra query parameters and unknown JSON fields in request bodies are ignored.
+      - **Browser access (CORS):** Direct browser calls from external origins return `400 Disallowed CORS origin` on the cross-origin resource sharing (CORS) preflight, and normal responses have no `Access-Control-Allow-Origin` header. Call the API from a backend service instead.
+
   - name: Health
     description: Service status.
   - name: Templates
