@@ -32,16 +32,20 @@
         display: none !important;
       }
 
-      /* Fallback Quickstart item styling in sidebar */
+      /* Quickstart item styling in desktop sidebar and mobile navigation drawer */
       #scalar-custom-quickstart,
-      .custom-quickstart-item {
+      .custom-quickstart-item,
+      .scalar-custom-quickstart,
+      [data-custom-quickstart="true"] {
         list-style: none;
         margin: 0;
         padding: 0;
       }
 
       #scalar-custom-quickstart a,
-      .custom-quickstart-item a {
+      .custom-quickstart-item a,
+      .scalar-custom-quickstart a,
+      [data-custom-quickstart="true"] a {
         display: flex;
         align-items: center;
         gap: 8px;
@@ -55,9 +59,11 @@
       }
 
       #scalar-custom-quickstart a:hover,
-      .custom-quickstart-item a:hover {
+      .custom-quickstart-item a:hover,
+      .scalar-custom-quickstart a:hover,
+      [data-custom-quickstart="true"] a:hover {
         color: var(--scalar-color-1, #f9fafb);
-        background: var(--scalar-background-2, rgba(255, 255, 255, 0.05));
+        background: var(--scalar-background-2, rgba(125, 125, 125, 0.1));
       }
 
       /* Temporarily hide OpenAPI spec download button */
@@ -136,95 +142,132 @@
           }
         });
 
-        // 5. Ensure "Quickstart" is the first link in the sidebar and navigates to quickstart.html
-        const sidebar = document.querySelector('.references-sidebar, .t-doc__sidebar, aside, [class*="sidebar"]');
-        if (sidebar) {
-          const firstGroup = sidebar.querySelector('ul, [class*="group"], nav');
-          if (firstGroup) {
-            let customItem = document.getElementById('scalar-custom-quickstart');
+        // 5. Ensure "Quickstart" is the first link in navigation lists (both desktop sidebar and mobile drawer)
+        const targetLists = [];
 
-            if (!customItem) {
-              const sampleItem = firstGroup.firstElementChild;
-              if (sampleItem) {
-                // Clone existing item so it inherits exact typography, layout, and classes
-                customItem = sampleItem.cloneNode(true);
-                customItem.id = 'scalar-custom-quickstart';
+        // Check desktop sidebar and mobile navigation drawer containers
+        const containers = document.querySelectorAll(
+          'aside, .references-sidebar, .t-doc__sidebar, [class*="sidebar"], [role="dialog"], dialog, [class*="drawer"], [class*="modal"], nav.scalar-navigation, .scalar-card, .scalar-app nav'
+        );
+        containers.forEach((container) => {
+          container.querySelectorAll('ul, nav').forEach((el) => {
+            if (!targetLists.includes(el)) targetLists.push(el);
+          });
+          if ((container.tagName === 'NAV' || container.tagName === 'UL') && !targetLists.includes(container)) {
+            targetLists.push(container);
+          }
+        });
 
-                // Strip active/selected styling from the clone
-                customItem.classList.remove('active', 'selected');
-                customItem.querySelectorAll('.active, [class*="active"], [class*="selected"]').forEach((el) => {
-                  el.classList.remove('active', 'selected');
-                  el.removeAttribute('aria-current');
-                });
+        // Also check any UL or NAV on the page
+        document.querySelectorAll('ul, nav').forEach((el) => {
+          if (!targetLists.includes(el)) targetLists.push(el);
+        });
 
-                // Update anchor / text to Quickstart
-                const anchor = customItem.tagName === 'A' ? customItem : customItem.querySelector('a');
-                if (anchor) {
-                  anchor.href = './quickstart.html';
-                  anchor.setAttribute('href', './quickstart.html');
-                  anchor.removeAttribute('aria-current');
+        // Filter to lists that actually contain an "Introduction" navigation item
+        const navGroups = targetLists.filter((list) => {
+          return Array.from(list.children).some((child) => {
+            const text = child.textContent?.trim().toLowerCase();
+            return text && text.startsWith('introduction');
+          });
+        });
 
-                  // Replace text content while preserving any icon element
-                  const textEl = anchor.querySelector('[class*="text"], [class*="title"], span') || anchor;
-                  textEl.textContent = 'Quickstart';
-                } else {
-                  customItem.textContent = 'Quickstart';
-                }
+        navGroups.forEach((group) => {
+          let customItem = group.querySelector('[data-custom-quickstart="true"]');
+
+          if (!customItem) {
+            // Find sample item (preferably Introduction) to clone structure & styling
+            const sampleItem = Array.from(group.children).find((child) => {
+              const text = child.textContent?.trim().toLowerCase();
+              return text && text.startsWith('introduction');
+            }) || group.firstElementChild;
+
+            if (sampleItem) {
+              // Clone existing item so it inherits exact typography, layout, and classes
+              customItem = sampleItem.cloneNode(true);
+              customItem.setAttribute('data-custom-quickstart', 'true');
+              customItem.classList.add('scalar-custom-quickstart');
+
+              // Strip active/selected styling from the clone
+              customItem.classList.remove('active', 'selected', 'router-link-active', 'router-link-exact-active');
+              customItem.querySelectorAll('.active, [class*="active"], [class*="selected"], [aria-current]').forEach((el) => {
+                el.classList.remove('active', 'selected');
+                el.removeAttribute('aria-current');
+              });
+
+              // Update anchor / text to Quickstart
+              const anchor = customItem.tagName === 'A' ? customItem : customItem.querySelector('a');
+              if (anchor) {
+                anchor.href = './quickstart.html';
+                anchor.setAttribute('href', './quickstart.html');
+                anchor.removeAttribute('aria-current');
+                anchor.classList.remove('active', 'selected', 'router-link-active', 'router-link-exact-active');
+
+                // Replace text content while preserving any icon element
+                const textEl = anchor.querySelector('[class*="text"], [class*="title"], span') || anchor;
+                textEl.textContent = 'Quickstart';
               } else {
-                // Fallback creation
-                customItem = document.createElement('li');
-                customItem.id = 'scalar-custom-quickstart';
-                customItem.className = 'sidebar-item custom-quickstart-item';
-
-                const customLink = document.createElement('a');
-                customLink.href = './quickstart.html';
-                customLink.className = 'sidebar-heading';
-                customLink.textContent = 'Quickstart';
-
-                customItem.appendChild(customLink);
+                customItem.textContent = 'Quickstart';
               }
+            } else {
+              // Fallback creation
+              customItem = document.createElement('li');
+              customItem.setAttribute('data-custom-quickstart', 'true');
+              customItem.className = 'sidebar-item custom-quickstart-item scalar-custom-quickstart';
 
-              // Intercept click in capture phase to guarantee direct navigation to quickstart.html
-              customItem.addEventListener('click', (e) => {
-                if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  window.location.href = './quickstart.html';
-                }
-              }, true);
+              const customLink = document.createElement('a');
+              customLink.href = './quickstart.html';
+              customLink.className = 'sidebar-heading';
+              customLink.textContent = 'Quickstart';
 
-              firstGroup.insertBefore(customItem, firstGroup.firstElementChild);
-            } else if (firstGroup.firstElementChild !== customItem) {
-              // Ensure Quickstart stays the very first link
-              firstGroup.insertBefore(customItem, firstGroup.firstElementChild);
+              customItem.appendChild(customLink);
             }
 
-            // 5. Clean up sub-items under Introduction in sidebar (such as nested Authentication or duplicate items)
-            firstGroup.querySelectorAll('*').forEach((el) => {
-              if (el.children.length === 0) {
-                const text = el.textContent?.trim();
-                if (/^authentication$/i.test(text)) {
-                  const item = el.closest('li') || el.closest('button') || el.closest('[class*="item"]') || el.parentElement;
-                  if (item && !item.closest('[id*="tag/Authentication"]') && !item.closest('[href*="#tag/Authentication"]')) {
-                    item.style.setProperty('display', 'none', 'important');
-                  }
-                }
-                if (/^quickstart$/i.test(text)) {
-                  const item = el.closest('li') || el.closest('button') || el.closest('[class*="item"]') || el.parentElement;
-                  if (item && item !== customItem && !item.contains(customItem) && !customItem.contains(item)) {
-                    item.style.setProperty('display', 'none', 'important');
-                  }
+            // Intercept click in capture phase to guarantee direct navigation to quickstart.html
+            customItem.addEventListener('click', (e) => {
+              if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                window.location.href = './quickstart.html';
+              }
+            }, true);
+
+            group.insertBefore(customItem, group.firstElementChild);
+          } else if (group.firstElementChild !== customItem && customItem.parentElement === group) {
+            // Ensure Quickstart stays the very first link in this group
+            group.insertBefore(customItem, group.firstElementChild);
+          }
+
+          // Clean up sub-items under Introduction in this list (such as nested Authentication or duplicate items)
+          group.querySelectorAll('*').forEach((el) => {
+            if (el.children.length === 0) {
+              const text = el.textContent?.trim();
+              if (/^quickstart$/i.test(text)) {
+                const item = el.closest('li') || el.closest('button') || el.closest('[class*="item"]') || el.parentElement;
+                if (item && !item.hasAttribute('data-custom-quickstart') && !item.closest('[data-custom-quickstart="true"]')) {
+                  item.style.setProperty('display', 'none', 'important');
                 }
               }
-            });
-          }
-        }
+            }
+          });
+        });
       }
 
       const observer = new MutationObserver(cleanScalarUI);
       observer.observe(document.documentElement, { childList: true, subtree: true });
       document.addEventListener('DOMContentLoaded', cleanScalarUI);
       window.addEventListener('load', cleanScalarUI);
+      window.addEventListener('resize', cleanScalarUI);
+
+      // Trigger when mobile menu or other navigation buttons are clicked
+      document.addEventListener('click', (e) => {
+        const btn = e.target.closest('button, [role="button"], a');
+        if (btn) {
+          requestAnimationFrame(cleanScalarUI);
+          setTimeout(cleanScalarUI, 50);
+          setTimeout(cleanScalarUI, 150);
+          setTimeout(cleanScalarUI, 350);
+        }
+      }, true);
 
       const intervalId = setInterval(cleanScalarUI, 300);
       setTimeout(() => clearInterval(intervalId), 10000);
