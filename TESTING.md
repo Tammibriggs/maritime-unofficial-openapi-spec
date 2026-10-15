@@ -1,6 +1,6 @@
 # Maritime Agents API: test coverage
 
-This file lists every live test run against the 18 operations in [`maritime_openapi.yaml`](maritime_openapi.yaml), and what is still untested. Each test is a case in [`tests/cases.yaml`](tests/cases.yaml); the case name is in brackets so you can find its capture in `tests/runs/<timestamp>/<case>.body`.
+This file lists every live test run against the 18 operations in [`maritime_openapi.yaml`](maritime_openapi.yaml), and what is still untested. Tests from 2026-10-03 and 2026-10-04 are cases in [`tests/cases.yaml`](tests/cases.yaml), with the case name in brackets. Tests marked **Follow-up** were run separately and aren't in `cases.yaml`. Captures aren't in the repo because they include details of the test account; a run of your own saves them to `tests/runs/<timestamp>/<case>.body`.
 
 | Run | Steps | Result |
 |---|---|---|
@@ -8,9 +8,28 @@ This file lists every live test run against the 18 operations in [`maritime_open
 | 2026-10-03, re-run | 70 | All passed |
 | 2026-10-04, extended run (`tests/runs/2026-10-04T01-44-12`) | 199 | 190 passed, 9 failed. All 9 were new behaviour; the spec now matches them |
 | 2026-10-04, follow-up (`tests/runs/2026-10-04T01-51-34`) | 14 | 13 passed; the duplicate-name case returned 409, now in the spec |
-| 2026-10-08, follow-up (`tests/runs/2026-10-08T18-21-59-followup`) | 14 | Verified wake-limit 429 unenforced (200), file invalid JSON (422), scoped keys (401), revoked/expired keys (401), and create auth |
+| 2026-10-08, follow-up (`tests/runs/2026-10-08T18-21-59-followup`) | 14 | Verified wake-limit 429 unenforced (200), file invalid JSON (422), revoked/expired keys (401), and create auth |
+| 2026-10-10, follow-up (matrix test) | 12 | Verified scoped key authorization: keys lacking required scopes (`provision`, `deploy`, `manage`) or bound to a project return `403 Forbidden` with explicit detail messages |
 
-`tests/cases.yaml` has 200 steps: 70 from 2026-10-03 and 130 added on 2026-10-04. The 2026-10-08 follow-up resolved 5 previously untested edge cases. Every captured response validates against the spec. In the tables below, **New** marks tests added on 2026-10-04, and **Follow-up** marks tests from 2026-10-08.
+`tests/cases.yaml` has 200 steps: 70 from 2026-10-03 and 130 added on 2026-10-04. The October follow-ups, run separately, resolved previously untested edge cases. Every captured response validates against the spec. In the tables below, **New** marks tests added on 2026-10-04, and **Follow-up** marks tests from October follow-ups.
+
+## Re-running the tests
+
+Set up once:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r tests/requirements.txt
+cp .env.example .env.local   # then add your API key
+```
+
+| Command | What it does | Cost |
+|---|---|---|
+| `.venv/bin/python tests/drift.py` | Compares Maritime's live official spec and docs page with `tests/baseline/`, for the 18 operations, and writes the differences to `tests/drift/latest.md` | Free; no key needed |
+| `.venv/bin/python tests/live_test.py` | Creates disposable agents named `oas-test-*` (two at most at once), runs every step in `tests/cases.yaml`, validates each response against the spec, writes `report.md` to `tests/runs/<timestamp>/`, and deletes every test agent | About 10 minutes, a little LLM credit, about 30 webhook deliveries, and room on your plan for two extra agents |
+| `.venv/bin/python tests/replay.py tests/runs/<timestamp>` | Validates a run's saved captures against `maritime_openapi.yaml` | Free and offline |
+
+The live runner only modifies agents named `oas-test-*`, and refuses to start if one is left over from an earlier run.
 
 ## Checks that apply to every endpoint
 
@@ -24,7 +43,7 @@ This file lists every live test run against the 18 operations in [`maritime_open
 | Invalid key on create agent [`badkey_create_agent`] | `401 Invalid token` | Follow-up |
 | Revoked API key on list agents [`revoked_list_agents`] | `401 Invalid token` | Follow-up |
 | Expired API key on list agents [`expired_list_agents`] | `401 Invalid token` | Follow-up |
-| Key with `scopes: ["deploy"]` on core agent endpoints [`scope_*`] | `401 Invalid token` (core routes reject scoped keys) | Follow-up |
+| Scoped keys on endpoints lacking that scope (or project-restricted) [`scope_*`] | `403 Forbidden` (`"This API key lacks the '<scope>' scope..."`) | Follow-up |
 | Key sent without `Bearer` [`auth_raw`] | `403` (treated as missing) | New |
 | Key sent in `X-API-Key` [`auth_xapikey`] | `403` (treated as missing) | New |
 | Invalid key on health, templates and webhook invoke [`health_badkey`, `templates_badkey`, `wh_badkey`] | Ignored | New |

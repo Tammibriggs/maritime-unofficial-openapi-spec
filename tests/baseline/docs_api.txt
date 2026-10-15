@@ -1,0 +1,322 @@
+Docs: REST API | Maritime
+maritime/Docs
+Search docs…⌘K
+BlogDashboard
+Getting started
+Overview
+Quickstart
+How Maritime works
+Billing & plans
+Build a platform
+Build on Maritime
+SDK quickstart
+Agents
+Webhooks
+End users
+Keys & scopes
+Examples
+Computers
+Run agents
+Templates
+Choose a framework
+Channels & integrations
+Triggers & schedules
+Framework guides
+Claude Code
+Codex
+OpenClaw
+Hermes
+ZeroClaw
+DeepSeek Harness
+Ship your own code
+Deploy any container
+Public web agents
+How builds work
+Env vars & sizing
+Reference
+CLI reference
+REST API
+SDK reference
+Limits & errors
+Resources
+Migrate to Maritime
+For AI agents
+REST API
+RESTful API for managing agents programmatically.
+Which API do I want?
+Building a product on Maritime? Use the SDK (TypeScript/Python); it wraps everything below.
+Driving your own agents over HTTP? This page: Bearer auth with an
+mk_
+key.
+Base URL:
+https://api.maritime.sh
+Check it's alive (no auth needed):
+GET /health
+curl https://api.maritime.sh/health
+# response includes {"status":"ok","runtime":"fleet"}
+Authentication
+Mint a personal API key with
+maritime keys create
+and send it as a Bearer token, the same token the CLI itself uses. Every authenticated endpoint on this page accepts it.
+curl -H "Authorization: Bearer mk_xxxxxxxxxxxx" \
+https://api.maritime.sh/api/agents
+Templates
+List available agent templates. Public, no auth.
+GET /api/templates
+Run itGET /api/templatespublic: works signed out
+Agents
+GET /api/agents
+Run itGET /api/agentslists YOUR agents via your dashboard session (the raw API returns a bare array)
+POST /api/agents
+Create returns
+201
+and starts deploying immediately. Always pass
+templateId
+(see
+GET /api/templates
+).
+POST /api/agents (body)Copy
+{
+"name": "my-agent",
+"templateId": "openclaw"
+}
+GET /api/agents/{agent_id}
+DELETE /api/agents/{agent_id}
+Delete returns
+204
+and removes the container and its data volume.
+Chat with an agent
+Sends a message through the same delivery path Telegram and webhooks use. Sleeping serverless agents wake automatically; the call waits for the reply.
+POST /api/agents/{agent_id}/chat
+curl -X POST https://api.maritime.sh/api/agents/AGENT_ID/chat \
+-H "Authorization: Bearer mk_xxxxxxxxxxxx" \
+-H "Content-Type: application/json" \
+-d '{"message": "summarize today"}'
+# → { "response": "..." }
+# Optional: pass "conversation_id" to continue a thread.
+Lifecycle
+Rarely needed (agents sleep and wake on their own), but available for ops:
+POST /api/agents/{agent_id}/start
+POST /api/agents/{agent_id}/stop
+POST /api/agents/{agent_id}/sleep
+POST /api/agents/{agent_id}/restart
+Logs
+GET /api/agents/{agent_id}/logs
+curl -H "Authorization: Bearer mk_xxxxxxxxxxxx" \
+"https://api.maritime.sh/api/agents/AGENT_ID/logs?limit=100&level=error"
+Files
+Move files in and out of a running agent's sandbox and manage its disk. Browse, write, and organize operations are scoped to the agent's persistent volume; the response of
+list
+reports that volume's mount as
+root
+(
+/data
+for most templates), so don't hardcode it. Download accepts any absolute in-container path, since agents also produce files in
+/tmp
+and workspace directories. Any file call wakes a sleeping agent; transfers are capped at 100 MB per file.
+GET /api/agents/{agent_id}/files/list?path=/data
+GET /api/agents/{agent_id}/files/download?path=/data/report.pdf
+POST /api/agents/{agent_id}/files/upload
+Upload is multipart (
+file
+field). With a
+dest_dir
+form field the file lands in that exact volume directory; without it, it's delivered as a chat attachment: the file lands in the agent's inbox and the agent is notified in its current conversation (an optional
+message
+field rides along).
+PUT /api/agents/{agent_id}/files/write
+POST /api/agents/{agent_id}/files/mkdir
+POST /api/agents/{agent_id}/files/move
+DELETE /api/agents/{agent_id}/files/delete?path=/data/old
+write
+takes
+{"path", "content"}
+(UTF-8 text);
+move
+takes
+{"from", "to"}
+and answers
+409
+if the destination exists and
+404
+if the source doesn't; delete of a missing path is
+404
+, and deleting the volume root is refused.
+curl -H "Authorization: Bearer mk_xxxxxxxxxxxx" \
+"https://api.maritime.sh/api/agents/AGENT_ID/files/list"
+# → { "path": "/data", "root": "/data",
+# "entries": [{ "name": "notes.md", "isDir": false, "size": 182, "mtime": 1723900000 }] }
+curl -X POST https://api.maritime.sh/api/agents/AGENT_ID/files/upload \
+-H "Authorization: Bearer mk_xxxxxxxxxxxx" \
+-F "file=@report.csv" -F "dest_dir=/data/inbox"
+# → { "ok": true, "path": "/data/inbox/report.csv", "name": "report.csv", "size": 5321 }
+These endpoints operate on the running agent's disk and never execute what you upload.
+Run a command
+Run a one-shot, non-interactive shell command in the agent's VM (its sandboxed container). Wakes a sleeping agent. Timeout defaults to 60s (max 120); output is one merged stream capped at 256 KB.
+POST /api/agents/{agent_id}/exec
+curl -X POST https://api.maritime.sh/api/agents/AGENT_ID/exec \
+-H "Authorization: Bearer mk_xxxxxxxxxxxx" \
+-H "Content-Type: application/json" \
+-d '{"command": ["ls", "-la", "/data"], "timeout": 30}'
+# → { "exitCode": 0, "stdout": "...", "stderr": "" }
+# "command" is argv tokens (quoted for you) or a raw shell string.
+Deploy
+Redeploy an agent from a GitHub repo or a Docker image:
+POST /api/deploy
+POST /api/deploy (body)Copy
+{
+"agentId": "AGENT_ID",
+"source": "github",
+"repoUrl": "https://github.com/you/app",
+"branch": "main"
+}
+Webhooks
+Every agent has an invoke URL. A POST is accepted immediately and delivered to the agent in the background, waking it first if it is asleep. Send the agent's invoke token as an
+X-Maritime-Webhook-Token
+header or a
+?token=
+query parameter. Calls without a token still work for now but are being phased out; get the token (and a ready-to-paste URL) from the token endpoint while signed in:
+POST /api/webhooks/{agent_id}
+Fetch the token and a ready-to-paste URL while signed in:
+GET /api/webhooks/{agent_id}/token
+Rotate the token when a caller that holds the URL should lose it. The old token stops working at once and the response carries the new token and URL. Needs a key with the
+manage
+scope.
+POST /api/webhooks/{agent_id}/token/rotate
+Invokes are rate limited per agent and caller (30/min) and share the agent's message budget, so a burst returns
+429
+with a
+Retry-After
+header instead of queueing.
+End users
+An end user is one of your users, keyed by the id you already hold for them (
+externalId
+: 1 to 128 characters of letters, digits and
+_ @ . : + -
+). Create or update one with a PUT; the same call is safe to run on every sign-in. The response is
+201
+on create and
+200
+on update. The body may carry
+displayName
+,
+metadata
+(flat JSON values) and up to eight
+tags
+; a field left out is kept.
+PUT /api/v1/end-users/{external_id}
+List one page at a time (newest first) with
+status
+,
+tag
+,
+externalIdPrefix
+,
+lastActiveBefore
+,
+lastActiveAfter
+,
+cursor
+and
+limit
+(1 to 200) as query parameters. The detail includes the end user's agents.
+GET /api/v1/end-users
+GET /api/v1/end-users/{external_id}
+Create the end user's agent exactly once. The body is the agent create body with an optional
+name
+(the external id names the agent when left out). The first call returns
+201
+and starts deploying; a repeat call returns the existing agent with
+200
+. The end user is created on the way if it does not exist. All of the end user's agents come back in the full agent shape.
+POST /api/v1/end-users/{external_id}/agents
+GET /api/v1/end-users/{external_id}/agents
+A policy caps what one end user can spend and sets how their agents are sized. Set it as
+{ "policy": { ... } }
+with any of
+llm_spend_cap_cents_per_month
+,
+compute_minutes_cap
+,
+wakes_per_hour
+,
+idle_sleep_seconds
+,
+mem_mb
+,
+vcpus
+and
+disk_gb
+. A PUT replaces the whole policy and applies it to every agent the end user owns now (the response counts them). A DELETE removes it.
+GET /api/v1/end-users/{external_id}/policy
+PUT /api/v1/end-users/{external_id}/policy
+DELETE /api/v1/end-users/{external_id}/policy
+Mint a short-lived
+eu_
+token for the end user's own browser or app. It opens that one agent only, with the scopes you choose (
+chat
+,
+files
+,
+console
+,
+logs
+,
+app
+; default
+chat
+) for
+ttlSeconds
+(30 to 3600, default 900). The client sends it as
+Authorization: Bearer
+or as
+?token=
+on websockets. Pass
+agentId
+when the end user has more than one agent. A DELETE revokes every token the end user holds.
+POST /api/v1/end-users/{external_id}/tokens
+DELETE /api/v1/end-users/{external_id}/tokens
+Suspend an end user to put their agents to sleep and refuse every wake and spend until you resume them. Delete an end user to delete their agents and tokens; the response is
+204
+and the cleanup finishes in the background.
+POST /api/v1/end-users/{external_id}/suspend
+POST /api/v1/end-users/{external_id}/resume
+DELETE /api/v1/end-users/{external_id}
+Usage
+What your agents cost over a range, per agent and per day, so you can rebill your own users. Both take
+from
+and
+to
+as ISO timestamps (default: the last 30 days). Every row carries the agent's
+externalUserId
+; group on it for a per-user invoice. Under a seat plan the hosting cost is allocated from the plan price (
+hostingBasis
+is
+allocated
+); otherwise it is the metered spend. AI cost is always the real spend from your credits.
+GET /api/v1/usage
+GET /api/v1/usage/daily
+Computers
+Persistent desktops your own model drives, one per end user. These routes take a key with the
+computers
+scope and are usually reached through the MCP server; see the Computers guide.
+POST /api/v1/computers
+GET /api/v1/computers
+GET /api/v1/computers/{computer_id}
+DELETE /api/v1/computers/{computer_id}
+POST /api/v1/computers/{computer_id}/wake
+POST /api/v1/computers/{computer_id}/sleep
+POST /api/v1/computers/{computer_id}/actions
+GET /api/v1/computers/{computer_id}/screenshot
+POST /api/v1/computers/{computer_id}/exec
+GET /api/v1/computers/{computer_id}/files
+PUT /api/v1/computers/{computer_id}/files
+GET /api/v1/computers/{computer_id}/files/list
+POST /api/v1/computers/{computer_id}/viewer
+POST /api/v1/computers/{computer_id}/sessions/close
+GET /api/v1/computers/{computer_id}/sessions
+GET /api/v1/computers/usage
+Looking for more?
+Everything else is scriptable via the CLI. Run
+maritime guide --json
+for the full machine-readable surface. Dashboard-internal endpoints are intentionally undocumented and may change without notice.

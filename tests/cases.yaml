@@ -1,0 +1,336 @@
+# Live test cases for the 18 documented operations, run in order by live_test.py.
+#
+# Placeholders filled in at run time:
+#   {A}           the disposable agent's ID (saved from `create`)
+#   {R}           the agent's volume root (saved from `files_list`; /zeroclaw-data on ZeroClaw)
+#   {ZERO}        an all-zero UUID, for unknown-agent cases
+#   {TOKEN}       the agent's webhook token (saved from `wh_token`)
+#   {INBOX_FILE}  where the chat-attachment upload landed (saved from `upload_chat`)
+#   {BEFORE}      the newest log entry's timestamp (saved from `logs`)
+#   {DATE}        today's date, used in the agent name
+#   {B}           a second test agent's ID (saved from `create_dup` or `create_b`)
+#   {LONG}        the long-name agent's ID (saved from `create_longname`)
+#   {STRAY}       the unknown-template agent's ID (saved from `create_badtemplate`)
+#
+# Fields: method, path, auth (key | none | bad | raw | xapikey; default key), query, json, form,
+# body + content_type (a raw request body), file (multipart `file` field and its filename,
+# filled with a small CSV unless file_content is set), headers, expect (a status, or a list
+# of acceptable statuses), save ({VAR: response field; "0.timestamp" reads index 0 of a list;
+# skipped on an error response}), compare ({VAR: OTHER}; reports whether two saved values match
+# without printing them), repeat (send N copies back to back; keeps the first non-200 response),
+# unless (skip the case if VAR is set), validate (false for helper calls or statuses outside the
+# spec), timeout (seconds), note (why the case exists or what it proves).
+# A case whose path still holds an unsaved {VAR} is skipped and reported as SKIP.
+# "raw" sends the key without "Bearer"; "xapikey" sends it in X-API-Key.
+# A case with `poll` repeats a GET until a field has a value, and isn't captured.
+# `phase: teardown` cases run after the agent tests; the runner still deletes the
+# agent in a finally block if the run stops early.
+
+vars:
+  ZERO: 00000000-0000-0000-0000-000000000000
+  TEMPLATE: zeroclaw
+
+cases:
+  # --- No agent needed ---
+  - {name: health, method: GET, path: /health, auth: none, expect: 200}
+  - {name: templates, method: GET, path: /api/templates, auth: none, expect: 200,
+     note: "zeroclaw must stay in this list with envRequired empty, or the test agent can't be created"}
+  - {name: agents_list, method: GET, path: /api/agents, expect: 200}
+  - {name: agents_list_noauth, method: GET, path: /api/agents, auth: none, expect: 403,
+     note: "Missing key is 403, not 401"}
+  - {name: agents_list_badkey, method: GET, path: /api/agents, auth: bad, expect: 401}
+  - {name: create_422, method: POST, path: /api/agents, json: {templateId: zeroclaw}, expect: 422}
+  - {name: get_404, method: GET, path: "/api/agents/{ZERO}", expect: 404}
+  - {name: get_badid, method: GET, path: /api/agents/not-a-uuid, expect: 404,
+     note: "A malformed ID is 404, not 422"}
+  - {name: logs_404, method: GET, path: "/api/agents/{ZERO}/logs", expect: 404}
+  - {name: wh_404, method: POST, path: "/api/webhooks/{ZERO}", auth: none, json: {event: ping}, expect: 404}
+
+  # --- Auth on every protected route (unknown agent, so nothing real is touched) ---
+  - {name: auth_raw, method: GET, path: /api/agents, auth: raw, expect: 403,
+     note: "The key without the Bearer prefix"}
+  - {name: auth_xapikey, method: GET, path: /api/agents, auth: xapikey, expect: 403,
+     note: "The key in X-API-Key, a header the docs don't mention"}
+  - {name: health_badkey, method: GET, path: /health, auth: bad, expect: 200, note: "A bad key on a public endpoint"}
+  - {name: templates_badkey, method: GET, path: /api/templates, auth: bad, expect: 200, note: "A bad key on a public endpoint"}
+  - {name: wh_badkey, method: POST, path: "/api/webhooks/{ZERO}", auth: bad, json: {event: ping}, expect: 404,
+     note: "A bad API key on the webhook invoke, which takes no API key"}
+  - {name: noauth_get, method: GET, path: "/api/agents/{ZERO}", auth: none, expect: 403}
+  - {name: noauth_delete, method: DELETE, path: "/api/agents/{ZERO}", auth: none, expect: 403}
+  - {name: noauth_chat, method: POST, path: "/api/agents/{ZERO}/chat", auth: none, json: {message: hi}, expect: 403}
+  - {name: noauth_exec, method: POST, path: "/api/agents/{ZERO}/exec", auth: none, json: {command: "echo x"}, expect: 403}
+  - {name: noauth_logs, method: GET, path: "/api/agents/{ZERO}/logs", auth: none, expect: 403}
+  - {name: noauth_list, method: GET, path: "/api/agents/{ZERO}/files/list", auth: none, expect: 403}
+  - {name: noauth_download, method: GET, path: "/api/agents/{ZERO}/files/download", auth: none, query: {path: /tmp/x}, expect: 403}
+  - {name: noauth_upload, method: POST, path: "/api/agents/{ZERO}/files/upload", auth: none, file: report.csv, form: {dest_dir: /data}, expect: 403}
+  - {name: noauth_write, method: PUT, path: "/api/agents/{ZERO}/files/write", auth: none, json: {path: /data/x, content: x}, expect: 403}
+  - {name: noauth_mkdir, method: POST, path: "/api/agents/{ZERO}/files/mkdir", auth: none, json: {path: /data/x}, expect: 403}
+  - {name: noauth_move, method: POST, path: "/api/agents/{ZERO}/files/move", auth: none, json: {from: /data/x, to: /data/y}, expect: 403}
+  - {name: noauth_delfile, method: DELETE, path: "/api/agents/{ZERO}/files/delete", auth: none, query: {path: /data/x}, expect: 403}
+  - {name: badkey_get, method: GET, path: "/api/agents/{ZERO}", auth: bad, expect: 401}
+  - {name: badkey_delete, method: DELETE, path: "/api/agents/{ZERO}", auth: bad, expect: 401}
+  - {name: badkey_chat, method: POST, path: "/api/agents/{ZERO}/chat", auth: bad, json: {message: hi}, expect: 401}
+  - {name: badkey_exec, method: POST, path: "/api/agents/{ZERO}/exec", auth: bad, json: {command: "echo x"}, expect: 401}
+  - {name: badkey_logs, method: GET, path: "/api/agents/{ZERO}/logs", auth: bad, expect: 401}
+  - {name: badkey_list, method: GET, path: "/api/agents/{ZERO}/files/list", auth: bad, expect: 401}
+  - {name: badkey_download, method: GET, path: "/api/agents/{ZERO}/files/download", auth: bad, query: {path: /tmp/x}, expect: 401}
+  - {name: badkey_upload, method: POST, path: "/api/agents/{ZERO}/files/upload", auth: bad, file: report.csv, form: {dest_dir: /data}, expect: 401}
+  - {name: badkey_write, method: PUT, path: "/api/agents/{ZERO}/files/write", auth: bad, json: {path: /data/x, content: x}, expect: 401}
+  - {name: badkey_mkdir, method: POST, path: "/api/agents/{ZERO}/files/mkdir", auth: bad, json: {path: /data/x}, expect: 401}
+  - {name: badkey_move, method: POST, path: "/api/agents/{ZERO}/files/move", auth: bad, json: {from: /data/x, to: /data/y}, expect: 401}
+  - {name: badkey_delfile, method: DELETE, path: "/api/agents/{ZERO}/files/delete", auth: bad, query: {path: /data/x}, expect: 401}
+  - {name: badkey_whtoken, method: GET, path: "/api/webhooks/{ZERO}/token", auth: bad, expect: 401}
+
+  # --- Unknown agent on every agent route ---
+  - {name: delete_404, method: DELETE, path: "/api/agents/{ZERO}", expect: 404}
+  - {name: chat_404, method: POST, path: "/api/agents/{ZERO}/chat", json: {message: hi}, expect: 404}
+  - {name: exec_404, method: POST, path: "/api/agents/{ZERO}/exec", json: {command: "echo x"}, expect: 404}
+  - {name: list_404z, method: GET, path: "/api/agents/{ZERO}/files/list", expect: 404}
+  - {name: download_404z, method: GET, path: "/api/agents/{ZERO}/files/download", query: {path: /tmp/x}, expect: 404}
+  - {name: upload_404z, method: POST, path: "/api/agents/{ZERO}/files/upload", file: report.csv, form: {dest_dir: /data}, expect: 404}
+  - {name: write_404z, method: PUT, path: "/api/agents/{ZERO}/files/write", json: {path: /data/x, content: x}, expect: 404}
+  - {name: mkdir_404z, method: POST, path: "/api/agents/{ZERO}/files/mkdir", json: {path: /data/x}, expect: 404}
+  - {name: move_404z, method: POST, path: "/api/agents/{ZERO}/files/move", json: {from: /data/x, to: /data/y}, expect: 404}
+  - {name: delfile_404z, method: DELETE, path: "/api/agents/{ZERO}/files/delete", query: {path: /data/x}, expect: 404}
+  - {name: whtoken_404, method: GET, path: "/api/webhooks/{ZERO}/token", expect: 404}
+
+  # --- Wrong methods and CORS (statuses outside the spec, so not validated) ---
+  - {name: m405_put_agents, method: PUT, path: /api/agents, json: {}, expect: 405, validate: false}
+  - {name: m405_del_templates, method: DELETE, path: /api/templates, expect: 405, validate: false}
+  - {name: m405_get_chat, method: GET, path: "/api/agents/{ZERO}/chat", expect: 405, validate: false}
+  - {name: m405_post_health, method: POST, path: /health, auth: none, expect: 405, validate: false}
+  - {name: cors_preflight, method: OPTIONS, path: /api/agents, auth: none, expect: 400, validate: false,
+     headers: {Origin: "https://example.com", Access-Control-Request-Method: POST, Access-Control-Request-Headers: "authorization,content-type"},
+     note: "Read the Access-Control-* response headers"}
+  - {name: cors_simple, method: GET, path: /health, auth: none, headers: {Origin: "https://example.com"}, expect: 200,
+     note: "Is Access-Control-Allow-Origin sent on a plain GET?"}
+
+  # --- Create validation (every body that could succeed uses an oas-test- name) ---
+  - {name: create_empty, method: POST, path: /api/agents, json: {}, expect: 422,
+     note: "Does the 422 list both missing fields, or only the first?"}
+  - {name: create_tmpl_int, method: POST, path: /api/agents, json: {name: "oas-test-{DATE}-x", templateId: 123}, expect: 422}
+  - {name: create_badjson, method: POST, path: /api/agents, body: '{"name": "oas-test-x",', content_type: application/json, expect: 422}
+  - {name: create_form, method: POST, path: /api/agents, body: "name=oas-test-x&templateId=zeroclaw",
+     content_type: application/x-www-form-urlencoded, expect: 422}
+  - {name: agents_list_q, method: GET, path: /api/agents, query: {limit: 1, offset: 5}, expect: 200,
+     note: "Unknown query parameters: ignored, or does the list paginate?"}
+
+  # --- Create the disposable agent ---
+  - {name: create, method: POST, path: /api/agents, json: {name: "oas-test-{DATE}", templateId: "{TEMPLATE}"},
+     expect: 201, save: {A: id}}
+  - {name: get_deploying, method: GET, path: "/api/agents/{A}", expect: 200,
+     note: "Captures the agent record before it becomes active"}
+  - {name: wait_active, poll: {path: "/api/agents/{A}", field: status, equals: active, every: 5, max: 300}}
+  - {name: get, method: GET, path: "/api/agents/{A}", expect: 200}
+
+  # --- Chat and logs ---
+  - {name: chat, method: POST, path: "/api/agents/{A}/chat", json: {message: "Reply with exactly: hello from oas test"}, expect: 200}
+  - {name: chat_422, method: POST, path: "/api/agents/{A}/chat", json: {}, expect: 422}
+  - {name: chat_t2a, method: POST, path: "/api/agents/{A}/chat",
+     json: {message: "Remember the code word PELICAN-42. Just reply OK.", conversation_id: oas-thread-2}, expect: 200}
+  - {name: chat_t2b, method: POST, path: "/api/agents/{A}/chat",
+     json: {message: "What is the code word?", conversation_id: oas-thread-2}, expect: 200,
+     note: "Read the reply: on 2026-10-03 ZeroClaw did not recall the code word"}
+  - {name: chat_docs, method: POST, path: "/api/agents/{A}/chat", json: {message: "summarize today"}, expect: 200,
+     note: "The docs page's example, word for word"}
+  - {name: chat_empty, method: POST, path: "/api/agents/{A}/chat", json: {message: ""}, expect: 200}
+  - {name: chat_unicode, method: POST, path: "/api/agents/{A}/chat", json: {message: "Reply with exactly: héllo 🌊"}, expect: 200}
+  - {name: chat_extra, method: POST, path: "/api/agents/{A}/chat", json: {message: "Reply with exactly: OK", foo: bar}, expect: 200,
+     note: "An unknown field"}
+  - {name: chat_conv_int, method: POST, path: "/api/agents/{A}/chat", json: {message: "Reply with exactly: OK", conversation_id: 123},
+     expect: 422, note: "conversation_id as a number"}
+  - {name: logs, method: GET, path: "/api/agents/{A}/logs", query: {limit: 5}, expect: 200, save: {BEFORE: "0.timestamp"}}
+  - {name: logs_before, method: GET, path: "/api/agents/{A}/logs", query: {limit: 2, before: "{BEFORE}"}, expect: 200,
+     note: "Pages backwards from the newest entry above"}
+  - {name: logs_err, method: GET, path: "/api/agents/{A}/logs", query: {limit: 2, level: error}, expect: 200}
+  - {name: logs_badlvl, method: GET, path: "/api/agents/{A}/logs", query: {limit: 2, level: bogus}, expect: 422,
+     note: "The detail lists the valid levels"}
+  - {name: logs_bigl, method: GET, path: "/api/agents/{A}/logs", query: {limit: 5000}, expect: 422}
+  - {name: logs_docs, method: GET, path: "/api/agents/{A}/logs", query: {limit: 100, level: error}, expect: 200,
+     note: "The docs page's example, word for word"}
+  - {name: logs_l0, method: GET, path: "/api/agents/{A}/logs", query: {limit: 0}, expect: 200}
+  - {name: logs_l1, method: GET, path: "/api/agents/{A}/logs", query: {limit: 1}, expect: 200}
+  - {name: logs_l1000, method: GET, path: "/api/agents/{A}/logs", query: {limit: 1000}, expect: 200, note: "The maximum"}
+  - {name: logs_lstr, method: GET, path: "/api/agents/{A}/logs", query: {limit: abc}, expect: 422}
+  - {name: logs_badbefore, method: GET, path: "/api/agents/{A}/logs", query: {limit: 2, before: yesterday}, expect: 422}
+  - {name: logs_debug, method: GET, path: "/api/agents/{A}/logs", query: {limit: 3, level: debug}, expect: 200}
+  - {name: logs_info, method: GET, path: "/api/agents/{A}/logs", query: {limit: 3, level: info}, expect: 200}
+  - {name: logs_warn, method: GET, path: "/api/agents/{A}/logs", query: {limit: 3, level: warn}, expect: 200}
+  - {name: logs_upper, method: GET, path: "/api/agents/{A}/logs", query: {limit: 3, level: INFO}, expect: 200,
+     note: "Level matching is case-insensitive: INFO returns info entries"}
+
+  # --- Files ---
+  - {name: files_list, method: GET, path: "/api/agents/{A}/files/list", expect: 200, save: {R: root}}
+  - {name: files_list_data, method: GET, path: "/api/agents/{A}/files/list", query: {path: /data}, expect: 400,
+     note: "The docs page's own example path; fails on ZeroClaw"}
+  - {name: files_list_404, method: GET, path: "/api/agents/{A}/files/list", query: {path: "{R}/nope"}, expect: 404}
+  - {name: mkdir, method: POST, path: "/api/agents/{A}/files/mkdir", json: {path: "{R}/oas/inbox"}, expect: 200}
+  - {name: mkdir_again, method: POST, path: "/api/agents/{A}/files/mkdir", json: {path: "{R}/oas/inbox"}, expect: 200,
+     note: "mkdir is idempotent"}
+  - {name: mkdir_outside, method: POST, path: "/api/agents/{A}/files/mkdir", json: {path: /etc/oas}, expect: 400}
+  - {name: mkdir_traversal, method: POST, path: "/api/agents/{A}/files/mkdir", json: {path: "{R}/../oas"}, expect: 400}
+  - {name: mkdir_missing, method: POST, path: "/api/agents/{A}/files/mkdir", json: {}, expect: 400}
+  - {name: write, method: PUT, path: "/api/agents/{A}/files/write", json: {path: "{R}/oas/notes.md", content: "# Notes\nhello\n"}, expect: 200}
+  - {name: write_overwrite, method: PUT, path: "/api/agents/{A}/files/write", json: {path: "{R}/oas/notes.md", content: "# Notes v2\n"}, expect: 200}
+  - {name: write_missing, method: PUT, path: "/api/agents/{A}/files/write", json: {path: "{R}/oas/x.md"}, expect: 400,
+     note: "Hand-validated: 400, not the 422 the official spec declares"}
+  - {name: write_prefix, method: PUT, path: "/api/agents/{A}/files/write", json: {path: "{R}foo/x.md", content: x}, expect: 400}
+  - {name: write_newdir, method: PUT, path: "/api/agents/{A}/files/write", json: {path: "{R}/oas/deep/new/file.txt", content: x}, expect: 200,
+     note: "write creates parent directories"}
+  - {name: write_empty, method: PUT, path: "/api/agents/{A}/files/write", json: {path: "{R}/oas/empty.txt", content: ""}, expect: 200}
+  - {name: write_int, method: PUT, path: "/api/agents/{A}/files/write", json: {path: "{R}/oas/int.txt", content: 123}, expect: 400}
+  - {name: write_overdir, method: PUT, path: "/api/agents/{A}/files/write", json: {path: "{R}/oas/inbox", content: x}, expect: 500}
+  - {name: write_unicode, method: PUT, path: "/api/agents/{A}/files/write", json: {path: "{R}/oas/café notes.md", content: "unicode ✓\n"}, expect: 200}
+  - {name: write_dotfile, method: PUT, path: "/api/agents/{A}/files/write", json: {path: "{R}/oas/.hidden", content: x}, expect: 200}
+  - {name: write_traversal, method: PUT, path: "/api/agents/{A}/files/write", json: {path: "{R}/../etc/oas.txt", content: x}, expect: 400}
+  - {name: write_intra_traversal, method: PUT, path: "/api/agents/{A}/files/write", json: {path: "{R}/oas/../etc/oas.txt", content: x}, expect: 200,
+     note: "Unnormalized path with .. staying inside the volume resolves and succeeds"}
+  - {name: write_extra, method: PUT, path: "/api/agents/{A}/files/write", json: {path: "{R}/oas/extra.txt", content: x, foo: 1}, expect: 200}
+  - {name: list_hidden, method: GET, path: "/api/agents/{A}/files/list", query: {path: "{R}/oas"}, expect: 200,
+     note: "Are dotfiles listed? How is the unicode name returned?"}
+  - {name: list_file, method: GET, path: "/api/agents/{A}/files/list", query: {path: "{R}/oas/empty.txt"}, expect: 404}
+  - {name: list_traversal, method: GET, path: "/api/agents/{A}/files/list", query: {path: "{R}/../etc"}, expect: 400}
+  - {name: mkdir_overfile, method: POST, path: "/api/agents/{A}/files/mkdir", json: {path: "{R}/oas/empty.txt"}, expect: 500}
+  - {name: move, method: POST, path: "/api/agents/{A}/files/move", json: {from: "{R}/oas/notes.md", to: "{R}/oas/inbox/notes.md"}, expect: 200}
+  - {name: move_404, method: POST, path: "/api/agents/{A}/files/move", json: {from: "{R}/oas/notes.md", to: "{R}/oas/n2.md"}, expect: 404}
+  - {name: move_409, method: POST, path: "/api/agents/{A}/files/move", json: {from: "{R}/oas/deep/new/file.txt", to: "{R}/oas/inbox/notes.md"}, expect: 409}
+  - {name: move_self, method: POST, path: "/api/agents/{A}/files/move", json: {from: "{R}/oas/inbox/notes.md", to: "{R}/oas/inbox/notes.md"},
+     expect: 400}
+  - {name: move_outside, method: POST, path: "/api/agents/{A}/files/move", json: {from: "{R}/oas/inbox/notes.md", to: /tmp/notes.md}, expect: 400}
+  - {name: move_missing, method: POST, path: "/api/agents/{A}/files/move", json: {from: "{R}/oas/inbox/notes.md"}, expect: 400}
+  - {name: move_dir, method: POST, path: "/api/agents/{A}/files/move", json: {from: "{R}/oas/deep", to: "{R}/oas/deep2"}, expect: 200,
+     note: "Moving a directory"}
+  - {name: upload_dest, method: POST, path: "/api/agents/{A}/files/upload", file: report.csv, form: {dest_dir: "{R}/oas/inbox"}, expect: 200}
+  - {name: upload_dest_again, method: POST, path: "/api/agents/{A}/files/upload", file: report.csv, form: {dest_dir: "{R}/oas/inbox"}, expect: 200,
+     note: "Same name silently overwrites"}
+  - {name: upload_nofile, method: POST, path: "/api/agents/{A}/files/upload", form: {dest_dir: "{R}/oas/inbox"}, expect: 422}
+  - {name: upload_chat, method: POST, path: "/api/agents/{A}/files/upload", file: report.csv,
+     form: {message: "Here is the report, how many rows does it have?"}, expect: 200, save: {INBOX_FILE: path}}
+  - {name: upload_docs, method: POST, path: "/api/agents/{A}/files/upload", file: report.csv, form: {dest_dir: /data/inbox}, expect: 400,
+     note: "The docs page's example, word for word; /data is outside the ZeroClaw volume"}
+  - {name: upload_outside, method: POST, path: "/api/agents/{A}/files/upload", file: report.csv, form: {dest_dir: /tmp}, expect: 400}
+  - {name: upload_newdir, method: POST, path: "/api/agents/{A}/files/upload", file: report.csv, form: {dest_dir: "{R}/oas/newdir"},
+     expect: 200, note: "A dest_dir that doesn't exist yet"}
+  - {name: upload_traversal, method: POST, path: "/api/agents/{A}/files/upload", file: ../evil.csv, form: {dest_dir: "{R}/oas/inbox"},
+     expect: 200, note: "Read the returned path: is the filename sanitised?"}
+  - {name: upload_empty, method: POST, path: "/api/agents/{A}/files/upload", file: empty.csv, file_content: "", form: {dest_dir: "{R}/oas/inbox"},
+     expect: 200}
+  - {name: upload_both, method: POST, path: "/api/agents/{A}/files/upload", file: both.csv,
+     form: {dest_dir: "{R}/oas/inbox", message: "ignore this"}, expect: 200, note: "dest_dir and message together"}
+  - {name: download, method: GET, path: "/api/agents/{A}/files/download", query: {path: "{R}/oas/inbox/report.csv"}, expect: 200}
+  - {name: download_404, method: GET, path: "/api/agents/{A}/files/download", query: {path: "{R}/oas/none.csv"}, expect: 404}
+  - {name: download_tmp, method: GET, path: "/api/agents/{A}/files/download", query: {path: /etc/hostname}, expect: 404}
+  - {name: download_docs, method: GET, path: "/api/agents/{A}/files/download", query: {path: /data/report.pdf}, expect: 404,
+     note: "The docs page's example, word for word"}
+  - {name: download_dir, method: GET, path: "/api/agents/{A}/files/download", query: {path: "{R}/oas"}, expect: 400}
+  - {name: download_unicode, method: GET, path: "/api/agents/{A}/files/download", query: {path: "{R}/oas/café notes.md"}, expect: 200,
+     note: "Read Content-Disposition"}
+  - {name: download_empty, method: GET, path: "/api/agents/{A}/files/download", query: {path: "{R}/oas/empty.txt"}, expect: 404}
+
+  # --- Exec ---
+  - {name: exec_argv, method: POST, path: "/api/agents/{A}/exec", json: {command: [ls, -la, "{R}/oas"], timeout: 30}, expect: 200}
+  - {name: exec_str, method: POST, path: "/api/agents/{A}/exec",
+     json: {command: "echo out; echo err 1>&2; echo hi > /tmp/oas.txt; exit 3"}, expect: 200,
+     note: "Non-zero exit still returns 200; stderr is merged into stdout"}
+  - {name: exec_tmpdl, method: GET, path: "/api/agents/{A}/files/download", query: {path: /tmp/oas.txt}, expect: 200,
+     note: "Download accepts paths outside the volume"}
+  - {name: exec_missing, method: POST, path: "/api/agents/{A}/exec", json: {}, expect: 400}
+  - {name: exec_timeout, method: POST, path: "/api/agents/{A}/exec", json: {command: "sleep 8", timeout: 3}, expect: 502, timeout: 200,
+     note: "timeout is honoured"}
+  - {name: exec_timeoutS, method: POST, path: "/api/agents/{A}/exec", json: {command: "sleep 8", timeoutS: 3}, expect: 200, timeout: 200,
+     note: "timeoutS (the Computers field) is ignored, so the command runs the full 8 s"}
+  - {name: exec_toobig, method: POST, path: "/api/agents/{A}/exec", json: {command: "echo x", timeout: 500}, expect: 200,
+     note: "The documented 120 s maximum isn't validated"}
+  - {name: exec_docs, method: POST, path: "/api/agents/{A}/exec", json: {command: [ls, -la, /data], timeout: 30}, expect: 200,
+     note: "The docs page's example, word for word"}
+  - {name: exec_cap, method: POST, path: "/api/agents/{A}/exec", json: {command: "head -c 300000 /dev/zero | tr '\\0' x"}, expect: 200,
+     note: "300,000 bytes of output against the documented 256 KB cap"}
+  - {name: exec_clamp, method: POST, path: "/api/agents/{A}/exec", json: {command: "sleep 125; echo done", timeout: 500},
+     expect: 502, timeout: 200, note: "502 after about 120 s means timeouts are clamped; 200 after 125 s means they aren't"}
+  - {name: exec_empty_str, method: POST, path: "/api/agents/{A}/exec", json: {command: ""}, expect: 400}
+  - {name: exec_empty_list, method: POST, path: "/api/agents/{A}/exec", json: {command: []}, expect: 400}
+  - {name: exec_nobin, method: POST, path: "/api/agents/{A}/exec", json: {command: [no-such-binary-oas]}, expect: 200}
+  - {name: exec_t0, method: POST, path: "/api/agents/{A}/exec", json: {command: "echo x", timeout: 0}, expect: 200}
+  - {name: exec_tneg, method: POST, path: "/api/agents/{A}/exec", json: {command: "echo x", timeout: -1}, expect: 502}
+  - {name: exec_tfloat, method: POST, path: "/api/agents/{A}/exec", json: {command: "echo x", timeout: 1.5}, expect: 200}
+  - {name: exec_tstr, method: POST, path: "/api/agents/{A}/exec", json: {command: "echo x", timeout: "5"}, expect: 200}
+  - {name: exec_whoami, method: POST, path: "/api/agents/{A}/exec", json: {command: "whoami; pwd; echo $HOME; id"}, expect: 200,
+     note: "The user and working directory commands run as"}
+  - {name: exec_extra, method: POST, path: "/api/agents/{A}/exec", json: {command: "echo x", foo: 1}, expect: 200}
+  - {name: exec_badjson, method: POST, path: "/api/agents/{A}/exec", body: '{"command": ', content_type: application/json, expect: 422}
+
+  # --- Delete files ---
+  - {name: del_file, method: DELETE, path: "/api/agents/{A}/files/delete", query: {path: "{R}/oas/inbox/report.csv"}, expect: 200}
+  - {name: del_dir, method: DELETE, path: "/api/agents/{A}/files/delete", query: {path: "{R}/oas"}, expect: 200,
+     note: "Delete is recursive"}
+  - {name: del_404, method: DELETE, path: "/api/agents/{A}/files/delete", query: {path: "{R}/oas"}, expect: 404}
+  - {name: del_root, method: DELETE, path: "/api/agents/{A}/files/delete", query: {path: "{R}"}, expect: 400}
+  - {name: del_nopath, method: DELETE, path: "/api/agents/{A}/files/delete", expect: 422}
+  - {name: del_inbox, method: DELETE, path: "/api/agents/{A}/files/delete", query: {path: "{INBOX_FILE}"}, expect: 200}
+  - {name: del_docs, method: DELETE, path: "/api/agents/{A}/files/delete", query: {path: /data/old}, expect: 400,
+     note: "The docs page's example, word for word"}
+  - {name: del_outside, method: DELETE, path: "/api/agents/{A}/files/delete", query: {path: /tmp/oas.txt}, expect: 400}
+  - {name: del_traversal, method: DELETE, path: "/api/agents/{A}/files/delete", query: {path: "{R}/../etc"}, expect: 400}
+
+  # --- Webhooks ---
+  - {name: wh_token, method: GET, path: "/api/webhooks/{A}/token", expect: 200, save: {TOKEN: token}}
+  - {name: wh_token_noauth, method: GET, path: "/api/webhooks/{A}/token", auth: none, expect: 403}
+  - {name: wh_token_again, method: GET, path: "/api/webhooks/{A}/token", expect: 200, save: {TOKEN2: token}, compare: {TOKEN2: TOKEN},
+     note: "Is the token stable across calls?"}
+  - {name: wh_header, method: POST, path: "/api/webhooks/{A}", auth: none, headers: {X-Maritime-Webhook-Token: "{TOKEN}"},
+     json: {event: order.created, orderId: A-1001}, expect: 200}
+  - {name: wh_query, method: POST, path: "/api/webhooks/{A}", auth: none, query: {token: "{TOKEN}"},
+     json: {event: order.created, orderId: A-1002}, expect: 200}
+  - {name: wh_none, method: POST, path: "/api/webhooks/{A}", auth: none, json: {event: ping}, expect: 200,
+     note: "No token is still accepted. A 401 here means Maritime turned on enforcement"}
+  - {name: wh_bad, method: POST, path: "/api/webhooks/{A}", auth: none, headers: {X-Maritime-Webhook-Token: wrong},
+     json: {event: ping}, expect: 200,
+     note: "A wrong token is accepted. A 401 here means Maritime turned on enforcement"}
+  - {name: wh_text, method: POST, path: "/api/webhooks/{A}", auth: none, headers: {X-Maritime-Webhook-Token: "{TOKEN}"},
+     body: "hello", content_type: text/plain, expect: 200}
+  - {name: wh_badjson, method: POST, path: "/api/webhooks/{A}", auth: none, headers: {X-Maritime-Webhook-Token: "{TOKEN}"},
+     body: '{"event": ', content_type: application/json, expect: 200}
+  - {name: wh_empty, method: POST, path: "/api/webhooks/{A}", auth: none, headers: {X-Maritime-Webhook-Token: "{TOKEN}"},
+     body: "", content_type: application/json, expect: 200}
+  - {name: wh_array, method: POST, path: "/api/webhooks/{A}", auth: none, headers: {X-Maritime-Webhook-Token: "{TOKEN}"},
+     json: [1, 2, 3], expect: 200}
+  - {name: logs_after_wh, method: GET, path: "/api/agents/{A}/logs", query: {limit: 8}, expect: 200, wait_before: 2,
+     note: "Should show the webhook deliveries"}
+  - {name: wh_burst, method: POST, path: "/api/webhooks/{A}", auth: none, headers: {X-Maritime-Webhook-Token: "{TOKEN}"},
+     json: {event: burst}, repeat: 35, expect: 429, timeout: 30,
+     note: "The docs give 30/min per agent and caller; read Retry-After in the capture"}
+  - {name: logs_after_burst, method: GET, path: "/api/agents/{A}/logs", query: {limit: 10}, expect: 200, wait_before: 2}
+
+  # --- Wake on call ---
+  - {name: sleep, method: POST, path: "/api/agents/{A}/sleep", expect: 200, validate: false,
+     note: "Lifecycle endpoint, outside the spec; puts the agent to sleep"}
+  - {name: wait_sleeping, poll: {path: "/api/agents/{A}", field: status, equals: sleeping, every: 5, max: 60}}
+  - {name: wake_files, method: GET, path: "/api/agents/{A}/files/list", expect: 200,
+     note: "A file call wakes a sleeping agent"}
+  - {name: sleep2, method: POST, path: "/api/agents/{A}/sleep", expect: 200, validate: false}
+  - {name: wait_sleeping2, poll: {path: "/api/agents/{A}", field: status, equals: sleeping, every: 5, max: 60}}
+  - {name: get_sleeping, method: GET, path: "/api/agents/{A}", expect: 200, note: "The agent record while asleep"}
+  - {name: chat_wake, method: POST, path: "/api/agents/{A}/chat", json: {message: "Reply with exactly: awake"}, expect: 200,
+     note: "Chat wakes a sleeping agent; the Time column is the wake latency"}
+
+  # --- A second test agent ---
+  - {name: create_dup, method: POST, path: /api/agents, json: {name: "oas-test-{DATE}", templateId: "{TEMPLATE}"},
+     expect: 409, save: {B: id}, note: "The same name as the first test agent: 409 on 2026-10-04"}
+  - {name: create_b, method: POST, path: /api/agents, json: {name: "oas-test-{DATE}-b", templateId: "{TEMPLATE}"},
+     expect: 201, save: {B: id}, unless: B, note: "Only runs if create_dup refused the duplicate"}
+  - {name: delete_deploying, method: DELETE, path: "/api/agents/{B}", expect: 204, note: "Delete while still deploying"}
+  - {name: get_b_after, method: GET, path: "/api/agents/{B}", expect: 404}
+
+  # --- Teardown ---
+  - {name: delete, method: DELETE, path: "/api/agents/{A}", expect: 204, phase: teardown}
+  - {name: get_after_delete, method: GET, path: "/api/agents/{A}", expect: 404, phase: teardown}
+  - {name: delete_again, method: DELETE, path: "/api/agents/{A}", expect: 404, phase: teardown}
+  - {name: create_longname, method: POST, path: /api/agents,
+     json: {name: "oas-test-LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL", templateId: "{TEMPLATE}"},
+     expect: 201, save: {LONG: id}, note: "A 278-character name. Runs after the other agents are gone"}
+  - {name: delete_long, method: DELETE, path: "/api/agents/{LONG}", expect: 204}
+  - {name: create_badtemplate, method: POST, path: /api/agents, json: {name: "oas-test-{DATE}-x", templateId: no-such-template},
+     expect: 201, save: {STRAY: id},
+     note: "An unknown templateId isn't rejected: it creates a framework=custom agent. Runs last so it can't take a seat"}
+  - {name: delete_stray, method: DELETE, path: "/api/agents/{STRAY}", expect: 204}
+  - {name: agents_list_final, method: GET, path: /api/agents, expect: 200, phase: teardown}

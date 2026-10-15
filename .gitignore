@@ -6,5 +6,14 @@
 !GAP_ANALYSIS.md
 !index.html
 !quickstart.html
+!.env.example
+# Test scripts, cases and the drift baseline. Captures and runs stay local.
+!tests/
+!tests/*.py
+!tests/cases.yaml
+!tests/requirements.txt
+!tests/baseline/
+!tests/baseline/openapi.json
+!tests/baseline/docs_api.txt
 !.github/
 !.github/**
