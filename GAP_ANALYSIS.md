@@ -12,11 +12,11 @@ The tables count each gap in each source. The **Both** column counts only gaps t
 
 | Gap | Out of | Docs page | Official spec | Both |
 |---|---|---|---|---|
-| No response example | 18 operations | 13 | 18 | 13 |
+| No response example | 18 operations | 11 | 18 | 11 |
 | No request example | 18 operations | 10 | 18 | 10 |
 | No error documented beyond a generic `422` | 18 operations | 15 | 16 | 15 |
 | No operation description | 18 operations | 2 | 7 | 2 |
-| Response shape not documented | 17 that return a body | 12 | 13 | 8 |
+| Response shape not documented | 17 that return a body | 10 | 13 | 6 |
 | Request body structure not given | 8 that take a body | 2 | 5 | 2 |
 
 **Fields with no description:**
@@ -26,9 +26,9 @@ The tables count each gap in each source. The **Both** column counts only gaps t
 | Request-body fields | 39 fields in 8 request bodies | 26 | 39 | 26 |
 | Agent response fields | 34 fields in the agent record | 34 | 34 | 34 |
 
-**How these were counted:** an example is a curl command, JSON body or sample output. A response shape or error counts as documented if it appears in a schema, an example, or prose that names it. For example, the spec's description of webhook invoke says it returns the agent record, and the docs page says move answers `409`. The 39 request-body fields are the 32 the spec declares plus 7 hidden in bodies it types only as "any object" (exec, write, mkdir, move).
+**How these were counted:** an example is a curl command, JSON body or sample output. A **Run it** button counts as a response example, because clicking it shows a live response, but not as a request example. The docs page has one on templates and one on list agents (which needs a dashboard sign-in). A response shape or error counts as documented if it appears in a schema, an example, or prose that names it. For example, the spec's description of webhook invoke says it returns the agent record, and the docs page says move answers `409`. The 39 request-body fields are the 32 the spec declares plus 7 hidden in bodies it types only as "any object" (exec, write, mkdir, move).
 
-The two sources complement each other a little. The docs page supplies examples and the exec and file body fields. The spec supplies typed responses for create, get and logs, and descriptions for most operations. Even combined, they leave 8 operations with no documented response, 15 with no documented error, 25 of the 27 create fields unexplained, and nothing at all on the agent record. Live testing also turned up four places where the docs page is wrong or misleading.
+The two sources complement each other a little. The docs page supplies examples and the exec and file body fields. The spec supplies typed responses for create, get and logs, and descriptions for most operations. Even combined, they leave 6 operations with no documented response, 15 with no documented error, 25 of the 27 create fields unexplained, and nothing at all on the agent record. Live testing also turned up four places where the docs page is wrong or misleading.
 
 **Most significant findings:**
 
@@ -37,15 +37,16 @@ The two sources complement each other a little. The docs page supplies examples 
    - On **Chat (`POST /chat`)**, the limit is enforced by the LLM proxy, but it returns **`HTTP 200 OK`** within 0.56s with an advisory payload (`{"response": "This agent can't be woken right now: You have 1 machines awake. Your plan permits 1. Sleep a machine, or upgrade your plan: https://maritime.sh/billing"}`). The agent is **not** woken and remains in `status: sleeping`.
    - On **Files (`GET /files/list`)**, the limit is bypassed entirely: calling it returns `200 OK` and wakes the micro-VM, allowing multiple machines to run concurrently in `status: active` on the Free plan.
    In neither case does the API return `429` or a `Retry-After` header.
-3. **Authentication error codes contradict the documentation.** The Limits page states that missing, invalid, revoked, or expired keys return `401`, while keys lacking required scopes return `403`. In reality:
+3. **Authentication error codes partially contradict the documentation.** The Limits page states that missing, invalid, revoked, or expired keys return `401`, while keys lacking required scopes return `403`. In reality:
    - A missing `Authorization` header returns `403 Not authenticated` (not `401`).
-   - Invalid, revoked, expired, and scoped keys rejected on core routes all return `401 Invalid token` (not `403`).
+   - Invalid, revoked, and expired keys return `401 Invalid token`.
+   - Keys lacking required scopes (e.g. `scopes: ["deploy"]` on agent create) or keys restricted to a specific `project_id` correctly return `403 Forbidden` with explicit detail messages (`"This API key lacks the '<scope>' scope required for this action."` or project restriction details), confirming the Limits page's scope rule.
 4. **Three of the docs' own example paths fail on some agents.** The docs use `/data` as their universal example path. While `/data` is the volume root for `openclaw`, `codex`, and `dsh`, it is outside a ZeroClaw agent's volume (`/zeroclaw-data`) and a Hermes agent's volume (`/opt/data`), so the list, upload and file-delete examples return `400` on those frameworks.
-5. **Errors use status codes neither source mentions.** Several endpoints return validation errors as `400` rather than the `422` the spec declares, though invalid JSON returns `422` across all endpoints. Create can return `402` (plan limit) or `409` (duplicate name), and write and mkdir return `500` for a path conflict a client caused.
+5. **Errors use status codes the official spec omits or misclassifies.** While the Limits page lists `402` (plan limit) and `409` (conflict/name taken), the official OpenAPI spec omits both and declares only `422` or no error responses. Furthermore, several endpoints return validation errors as `400` rather than the `422` the spec declares (though invalid JSON returns `422` across all endpoints), and write and mkdir return `500 Internal Server Error` for a path conflict a client caused.
 6. **Create doesn't check `templateId`.** A misspelt template ID returns `201`. It creates a `framework: custom` agent with nothing to run, and that agent takes one of the plan's seats.
 7. **The most complete reference is hidden.** The spec is the only place that types the create, get and logs responses, but the docs page never links to it. Where a developer does find it, searching it for exec's timeout turns up only `timeoutS`, a Computers field that agent exec silently ignores.
 
-The resulting OpenAPI document covers all 18 operations and passes `redocly lint`. It matches all 68 captured live responses from 2026-10-03, 200 responses from an extended run on 2026-10-04, and follow-up verification runs on 2026-10-08 covering auth scopes, revoked/expired tokens, concurrent wake behaviors, and JSON decoding errors across file endpoints. [`TESTING.md`](TESTING.md) lists every test and what's still untested.
+The resulting OpenAPI document covers all 18 operations and passes `redocly lint`. It matches all 68 captured live responses from 2026-10-03, 200 responses from an extended run on 2026-10-04, follow-up verification runs on 2026-10-08 covering revoked/expired tokens, concurrent wake behaviors, and JSON decoding errors across file endpoints, and re-verification on 2026-10-10 confirming scoped key 403 authorization enforcement. [`TESTING.md`](TESTING.md) lists every test and what's still untested.
 
 ## Scope and method
 
@@ -55,7 +56,7 @@ The resulting OpenAPI document covers all 18 operations and passes `redocly lint
 
 | Source | What it provides |
 |---|---|
-| [REST API docs page](https://maritime.sh/docs/api) | Prose descriptions, a few request bodies, limits, five example responses |
+| [REST API docs page](https://maritime.sh/docs/api) | Prose descriptions, a few request bodies, limits, five example responses, and **Run it** buttons on two endpoints |
 | [Auto-generated OpenAPI spec](https://api.maritime.sh/openapi.json) (FastAPI, OpenAPI 3.1, v0.1.0) | Paths, parameters, partial request and response schemas |
 | Live calls, 2026-10-03 | Real responses, status codes and headers for every operation |
 | Extended live calls, 2026-10-04 | Boundaries, wrong types, auth and 404 on every route, limits, the webhook rate limit, CORS and `405` handling |
@@ -73,11 +74,11 @@ These are the highest-severity gaps. A developer who follows the documentation e
 | `POST /webhooks/{id}` | Docs: "Calls without a token still work for now" | Calls with an incorrect token are also accepted | `X-Maritime-Webhook-Token: wrong` returned `200`, and the payload was delivered (agent log: "Webhook received with 1 keys"). |
 | `GET /files/list`, `POST /files/upload`, `DELETE /files/delete` | Docs examples: `?path=/data`, `dest_dir=/data/inbox`, `?path=/data/old` | Return `400` on `zeroclaw` (`Invalid path` / `Invalid destination`) and would fail on `hermes` | The volume root is framework-dependent: `/data` on `openclaw`/`codex`/`dsh`, `/zeroclaw-data` on `zeroclaw`, and `/opt/data` on `hermes`. The docs warn not to hardcode the root, but their own examples do. |
 | Endpoints that wake agents (`chat`, `exec`, file operations, `webhooks`) | Limits page: "Machines awake at once: Free 1 [...] a wake past the limit answers 429 with a 15 second retry hint" | Not enforced: waking a second sleeping agent while one is already active succeeds with `200` | Testing on 2026-10-08: `Zero Claw` was set to `active`, then `GET /files/list` was called on a sleeping test agent. It returned `200` in 2.8s; both ran concurrently in `active` state with no 429 or retry headers. |
-| All authenticated endpoints | Limits page: `401` for missing, invalid, revoked, or expired keys; `403` for insufficient scope | Missing key returns `403 Not authenticated`. Scoped keys return `401 Invalid token` on core routes, not `403`. | Testing on 2026-10-04 and 2026-10-08: missing `Authorization` header returned `403` on all 16 authenticated endpoints; a key with `scopes: ["deploy"]` returned `401` on core routes (which reject scoped keys). |
+| All authenticated endpoints | Limits page: `401` for missing, invalid, revoked, or expired keys; `403` for insufficient scope | Missing key returns `403 Not authenticated` (not `401`). Keys with insufficient scope or project restrictions return `403` with specific scope messages. Invalid, revoked, or expired keys return `401 Invalid token`. | Testing on 2026-10-04 and 2026-10-08 found missing `Authorization` header returns `403` on all 16 authenticated endpoints; testing on 2026-10-10 confirmed keys lacking scopes (`provision`, `deploy`, `manage`) return `403` with granular error details. |
 
 ### 2. Missing response schemas
 
-The official spec declares an empty schema for 14 of the 17 operations that return a body, so code generators produce untyped results. (Agent delete returns `204` with no body, so its empty schema is correct.) The docs page shows example output for five operations, and the spec's prose says webhook invoke returns the agent record. That still leaves 8 operations whose response is documented nowhere: templates, list agents, download, write, mkdir, move, file delete and webhook token.
+The official spec declares an empty schema for 14 of the 17 operations that return a body, so code generators produce untyped results. (Agent delete returns `204` with no body, so its empty schema is correct.) The docs page shows example output for five operations and has **Run it** buttons on two more (templates and list agents), and the spec's prose says webhook invoke returns the agent record. That still leaves 6 operations whose response is documented nowhere: download, write, mkdir, move, file delete and webhook token.
 
 Every response is now fully typed from observed data, for example:
 
@@ -90,12 +91,14 @@ Every response is now fully typed from observed data, for example:
 
 ### 3. Undocumented errors
 
-In the spec, all 18 operations list `422` as their only error response, or none at all. Prose fills in a little: the docs page gives move's `404` and `409`, file delete's `404` and the webhook `429`, and the spec's descriptions repeat the move and delete ones. That leaves 15 operations with no documented error in either source, and the auth errors that every authenticated call can return are documented nowhere. Testing found these, each now documented with its real `detail` message:
+In the official OpenAPI spec, all 18 operations list `422` as their only error response, or none at all. The published docs describe several errors across two pages: the Limits page (`https://maritime.sh/docs/limits`) lists platform-wide status codes (`401` missing/invalid key, `402` plan limit, `403` insufficient scope, `404` agent not found, `409` name conflict, `429` rate limit), while the REST API page (`https://maritime.sh/docs/api`) documents move's `404`/`409`, file delete's `404`, webhook's `429`, and exec's `400`, `404`, `409`, `501`, and `503`.
+
+However, the official spec omits almost all of these status codes and their response schemas. In addition, live testing revealed notable discrepancies from the documentation: missing authentication returns `403 Not authenticated` (rather than the Limits page's stated `401`), and client-caused path conflicts on write and mkdir trigger unhandled `500` server errors. Testing verified these real error responses:
 
 | Status | When | Endpoints |
 |---|---|---|
-| `401` | Invalid, expired, revoked, or unsupported scoped API key (`"Invalid token"`) | All 16 authenticated endpoints (including create; verified 2026-10-04 and 2026-10-08) |
-| `403` | No `Authorization` header, or the key sent without `Bearer` or in `X-API-Key` (`"Not authenticated"`) | All 16 authenticated endpoints (including create; verified 2026-10-04 and 2026-10-08) |
+| `401` | Invalid, expired, or revoked API key (`"Invalid token"`) | All 16 authenticated endpoints (verified live 2026-10-04, 2026-10-08, and 2026-10-10) |
+| `403` | Missing `Authorization` header (`"Not authenticated"`); API key lacking required scope (`"This API key lacks the '<scope>' scope required for this action."`); or project-restricted key on core routes | All 16 authenticated endpoints (missing auth verified 2026-10-04/08; scopes verified 2026-10-10) |
 | `402` | Plan's agent limit reached (`code: seat_limit`, `upgrade: true`) | create |
 | `404` | Unknown agent; also returned for a malformed, non-UUID ID | All agent-scoped (each one checked on 2026-10-04) |
 | `404` | Missing file, source or directory; a file path given to list (`"Not a directory"`); a **zero-byte** file on download | download, delete, move, list |
@@ -159,7 +162,7 @@ The official spec declares 32 request-body fields and 34 agent response fields, 
 
 ### 6. No examples
 
-None of the 18 operations has a request or response example in the official spec. The docs page has request examples for 8 operations and response examples for 5, so 10 operations have no example in either source. The new spec has realistic examples, taken from real responses, for every request body and every success and error response. Where an endpoint has meaningfully different modes, it shows several named examples: create from a template vs from an image, exec with argv vs a shell string, upload to a directory vs as an attachment.
+None of the 18 operations has a request or response example in the official spec. The docs page has request examples for 8 operations and response examples for 7 (5 written out, plus the **Run it** buttons on templates and list agents), so 9 operations have no example in either source. The new spec has realistic examples, taken from real responses, for every request body and every success and error response. Where an endpoint has meaningfully different modes, it shows several named examples: create from a template vs from an image, exec with argv vs a shell string, upload to a directory vs as an attachment.
 
 ## Per-endpoint summary
 
@@ -188,7 +191,7 @@ Severity reflects the worst gap closed: **High** means following the existing do
 
 ## What remains unverified
 
-The 2026-10-04 run closed four items from the earlier list: the webhook `429`, the exec output cap, exec timeout clamping, and the plan-limit error on create. Follow-up verification on 2026-10-08 closed five more: auth checks on create (`403` missing, `401` bad key), revoked and expired API keys (`401`), scoped keys on core routes (`401`), invalid JSON decoding on write/mkdir/move (`422`), and testing the "machines awake at once" limit (which proved the `429` limit is unenforced on the live API). The rest couldn't be safely or cheaply triggered. They're documented from the docs and labelled in each operation's `x-verification` block:
+The 2026-10-04 run closed four items from the earlier list: the webhook `429`, the exec output cap, exec timeout clamping, and the plan-limit error on create. Follow-up verification on 2026-10-08 closed five more: auth checks on create (`403` missing, `401` bad key), revoked and expired API keys (`401`), invalid JSON decoding on write/mkdir/move (`422`), and testing the "machines awake at once" limit (which proved the `429` limit is unenforced on the live API). On 2026-10-10, live verification across permission scopes confirmed that keys with insufficient scope or project restrictions return `403 Forbidden` with explicit scope error messages, correcting an earlier note. The rest couldn't be safely or cheaply triggered. They're documented from the docs and labelled in each operation's `x-verification` block:
 
 - **The 100 MB file transfer cap.** It would mean uploading over 100 MB.
 - **The `{"status": "accepted"}` webhook response**, which only appears once Maritime turns token enforcement on.

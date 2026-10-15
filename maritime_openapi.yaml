@@ -14,7 +14,7 @@ info:
     This document covers the 18 core agent operations. It's based on the
     [Maritime REST API documentation](https://maritime.sh/docs/api) and the
     [Maritime OpenAPI specification](https://api.maritime.sh/openapi.json), and
-    was checked against live calls on October 3, 4, and 8, 2026. Each
+    was checked against live calls on October 3, 4, 8, and 10, 2026. Each
     operation has an `x-verification` block that records what was confirmed
     live and what was taken from the docs without verification.
 
@@ -45,7 +45,7 @@ tags:
 
       - **Missing key (`403`):** Omitting the `Authorization` header returns `403 Forbidden` with `{"detail": "Not authenticated"}`. The key must use the `Bearer` scheme; sending the key without `Bearer`, or in an `X-API-Key` header, returns `403`.
       - **Invalid, expired, or revoked key (`401`):** An invalid token, an expired key, or a revoked key returns `401 Unauthorized` with `{"detail": "Invalid token"}`.
-      - **Key scopes:** You can create keys with restricted scopes (`provision`, `deploy`, `secrets`, and `manage`), but restricted keys are meant for the `/api/v1` partner API. If you use a scoped key with the core agent API (`/api/agents/*`), the API returns `401` with `Invalid token`. Use a full-access key for the core agent API.
+      - **Key scopes:** You can create keys with specific scopes (`provision`, `deploy`, `secrets`, and `manage`). If a key lacks the scope required for an operation (for example, `provision` on agent create, `deploy` on chat or file transfers, or `manage` on delete), the API returns `403 Forbidden` with `{"detail": "This API key lacks the '<scope>' scope required for this action."}`. Keys bound to a specific `project_id` are restricted to partner endpoints and return `403` on core routes.
       - **Public endpoints:** Public endpoints (`/health`, `/api/templates`, and `/api/webhooks/{agent_id}`) don't require authentication and ignore invalid tokens.
 
   - name: Rate Limits
@@ -77,9 +77,9 @@ tags:
       | Status | Meaning | `detail` format | Example and resolution |
       |---|---|---|---|
       | `400 Bad Request` | Invalid body for exec or for the file write, mkdir, or move endpoints; a path outside the volume; or a directory passed to download | String | `{"detail": "Invalid path"}`. Check the request parameters and make sure the path is inside the volume. |
-      | `401 Unauthorized` | Invalid, expired, revoked, or unsupported scoped API key | String | `{"detail": "Invalid token"}`. Check your API key, or generate a new one in the dashboard settings. |
+      | `401 Unauthorized` | Invalid, expired, or revoked API key | String | `{"detail": "Invalid token"}`. Check your API key, or generate a new one in the dashboard settings. |
       | `402 Payment Required` | Your plan's agent limit is reached | Object (`PlanLimitError`) | `{"detail": "...", "code": "seat_limit", "upgrade": true}`. Delete an unused agent or upgrade your plan. |
-      | `403 Forbidden` | Missing `Authorization` header or missing `Bearer` prefix | String | `{"detail": "Not authenticated"}`. Include `Authorization: Bearer API_KEY`. |
+      | `403 Forbidden` | Missing `Authorization` header, missing `Bearer` prefix, insufficient key scope, or project boundary violation | String | `{"detail": "Not authenticated"}` or `{"detail": "This API key lacks the '<scope>' scope required for this action."}`. |
       | `404 Not Found` | Agent not found, path not found on the volume, or downloaded file is empty | String | `{"detail": "Agent AGENT_ID not found"}`. Check the agent ID or container path. |
       | `405 Method Not Allowed` | Unsupported HTTP method on the route | String (empty or text) | Check the `Allow` header and use the correct HTTP method. |
       | `409 Conflict` | Agent name already taken, or the destination of a file move already exists | String | `{"detail": "You already have an agent named..."}`. Choose a different name or destination. |
@@ -113,6 +113,9 @@ tags:
       outside the volume return `400 Invalid path`. Download accepts any
       absolute path in the container. Every file request wakes a sleeping
       agent. Transfers are limited to 100 MB per file.
+
+      The examples come from a `zeroclaw` agent, so their paths start with
+      `/zeroclaw-data`.
   - name: Webhooks
     description: |
       These are incoming webhooks: external services send data **to**
@@ -615,12 +618,12 @@ paths:
               argv:
                 summary: Argv tokens
                 value:
-                  command: [ls, -la, /data]
+                  command: [ls, -la, /zeroclaw-data/oas]
                   timeout: 30
               shell:
                 summary: Raw shell string
                 value:
-                  command: 'grep -c ERROR /data/app.log || true'
+                  command: 'echo out; echo err 1>&2; exit 3'
       responses:
         '200':
           description: The command was executed.
@@ -882,7 +885,7 @@ paths:
           description: Absolute path of the file in the container.
           schema:
             type: string
-          example: /data/report.pdf
+          example: /zeroclaw-data/oas/inbox/report.csv
       responses:
         '200':
           description: The file contents.
@@ -1038,7 +1041,7 @@ paths:
             schema:
               $ref: '#/components/schemas/WriteFileRequest'
             example:
-              path: /data/notes.md
+              path: /zeroclaw-data/oas/notes.md
               content: "# Notes\nhello\n"
       responses:
         '200':
@@ -1108,7 +1111,7 @@ paths:
             schema:
               $ref: '#/components/schemas/PathRequest'
             example:
-              path: /data/inbox
+              path: /zeroclaw-data/oas/inbox
       responses:
         '200':
           description: The directory was created or already exists.
@@ -1180,8 +1183,8 @@ paths:
             schema:
               $ref: '#/components/schemas/MoveRequest'
             example:
-              from: /data/notes.md
-              to: /data/archive/notes.md
+              from: /zeroclaw-data/oas/notes.md
+              to: /zeroclaw-data/oas/inbox/notes.md
       responses:
         '200':
           description: The file or directory was moved successfully.
@@ -1255,7 +1258,7 @@ paths:
           description: Absolute path inside the volume.
           schema:
             type: string
-          example: /data/old
+          example: /zeroclaw-data/oas
       responses:
         '200':
           description: The file or directory was deleted successfully.
@@ -1454,15 +1457,26 @@ components:
 
   responses:
     MissingKey:
-      description: No `Authorization` header was sent, or the key was sent without the `Bearer` prefix or in an `X-API-Key` header.
+      description: No `Authorization` header was sent, the key was sent without the `Bearer` prefix or in an `X-API-Key` header, or the key lacks the scope or project access that this operation requires.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
-          example:
-            detail: Not authenticated
+          examples:
+            missing:
+              summary: Missing or malformed authentication header
+              value:
+                detail: Not authenticated
+            insufficientScope:
+              summary: Insufficient scope for this operation
+              value:
+                detail: "This API key lacks the 'provision' scope required for this action."
+            projectScoped:
+              summary: Project-scoped key on core endpoints
+              value:
+                detail: "This API key is scoped to a project and is only valid on the /api/v1 partner endpoints (front door messages/users, usage) for that project."
     InvalidKey:
-      description: The API key is invalid, expired, revoked, or lacks access to this surface (for example, scoped keys on core routes).
+      description: The API key is invalid, expired, or revoked.
       content:
         application/json:
           schema:
@@ -1939,7 +1953,7 @@ components:
                 type: string
             - type: string
               minLength: 1
-          example: [ls, -la, /data]
+          example: [ls, -la, /zeroclaw-data/oas]
         timeout:
           type: integer
           minimum: 1
@@ -2042,7 +2056,7 @@ components:
         dest_dir:
           type: string
           description: A directory within the volume where the file is saved. Omit this field to send the file as a chat attachment.
-          example: /data/inbox
+          example: /zeroclaw-data/oas/inbox
         message:
           type: string
           description: Text sent to the agent along with a chat attachment. Intended for when `dest_dir` is omitted. If `dest_dir` is specified, the file is still saved to that directory.
@@ -2058,7 +2072,7 @@ components:
         path:
           type: string
           description: The path where the file was saved.
-          example: /data/inbox/report.csv
+          example: /zeroclaw-data/oas/inbox/report.csv
         name:
           type: string
           description: The original file name.
@@ -2075,7 +2089,7 @@ components:
         path:
           type: string
           description: An absolute path within the agent's volume.
-          example: /data/inbox
+          example: /zeroclaw-data/oas/inbox
 
     WriteFileRequest:
       type: object
@@ -2084,7 +2098,7 @@ components:
         path:
           type: string
           description: An absolute file path within the agent's volume.
-          example: /data/notes.md
+          example: /zeroclaw-data/oas/notes.md
         content:
           type: string
           description: The full file contents, as UTF-8 text.
@@ -2100,7 +2114,7 @@ components:
         path:
           type: string
           description: The path that was acted on.
-          example: /data/notes.md
+          example: /zeroclaw-data/oas/notes.md
 
     MoveRequest:
       type: object
@@ -2109,11 +2123,11 @@ components:
         from:
           type: string
           description: The existing path.
-          example: /data/notes.md
+          example: /zeroclaw-data/oas/notes.md
         to:
           type: string
           description: The new path. Must not already exist.
-          example: /data/archive/notes.md
+          example: /zeroclaw-data/oas/inbox/notes.md
 
     MoveResult:
       type: object
@@ -2124,10 +2138,10 @@ components:
           example: true
         from:
           type: string
-          example: /data/notes.md
+          example: /zeroclaw-data/oas/notes.md
         to:
           type: string
-          example: /data/archive/notes.md
+          example: /zeroclaw-data/oas/inbox/notes.md
 
     WebhookToken:
       type: object
