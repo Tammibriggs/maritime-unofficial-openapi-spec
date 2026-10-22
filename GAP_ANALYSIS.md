@@ -1,4 +1,4 @@
-# Maritime Agents API: documentation gap analysis
+# Maritime API: documentation gap analysis
 
 This analysis looks at 18 core operations of the Maritime REST API. It records where the published documentation falls short of what a developer needs to integrate, and how the companion OpenAPI document, [`maritime_openapi.yaml`](maritime_openapi.yaml), closes each gap.
 
@@ -28,7 +28,7 @@ The tables count each gap in each source. The **Both** column counts only gaps t
 
 **How these were counted:** an example is a curl command, JSON body or sample output. A **Run it** button counts as a response example, because clicking it shows a live response, but not as a request example. The docs page has one on templates and one on list agents (which needs a dashboard sign-in). A response shape or error counts as documented if it appears in a schema, an example, or prose that names it. For example, the spec's description of webhook invoke says it returns the agent record, and the docs page says move answers `409`. The 39 request-body fields are the 32 the spec declares plus 7 hidden in bodies it types only as "any object" (exec, write, mkdir, move).
 
-The two sources complement each other a little. The docs page supplies examples and the exec and file body fields. The spec supplies typed responses for create, get and logs, and descriptions for most operations. Even combined, they leave 6 operations with no documented response, 15 with no documented error, 25 of the 27 create fields unexplained, and nothing at all on the agent record. Live testing also turned up four places where the docs page is wrong or misleading.
+The two sources complement each other a little. The docs page supplies examples and the exec and file body fields. The spec supplies typed responses for create, get and logs, and descriptions for most operations. Even combined, they leave 6 operations with no documented response, 15 with no documented error, 25 of the 27 create fields unexplained, and nothing at all on the agent record. Live testing also turned up four places where Maritime's docs, on the API page and the Limits page, are wrong or misleading.
 
 **Most significant findings:**
 

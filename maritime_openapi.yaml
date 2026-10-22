@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Maritime Agents API
+  title: Maritime API
   version: 1.0.0
   description: |
     The Maritime REST API lets you create AI agents from templates, chat with

@@ -1,4 +1,4 @@
-# Maritime Agents API: test coverage
+# Maritime API: test coverage
 
 This file lists every live test run against the 18 operations in [`maritime_openapi.yaml`](maritime_openapi.yaml), and what is still untested. Tests from 2026-10-03 and 2026-10-04 are cases in [`tests/cases.yaml`](tests/cases.yaml), with the case name in brackets. Tests marked **Follow-up** were run separately and aren't in `cases.yaml`. Captures aren't in the repo because they include details of the test account; a run of your own saves them to `tests/runs/<timestamp>/<case>.body`.
 
